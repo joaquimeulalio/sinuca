@@ -202,8 +202,10 @@ function compute(){
   const t2 = angleH(Q, F);     // linha 2: branca->fantasma
   // fracao horizontal de A
   let afrac = (A.x - L)/W;
-  // angulo de corte: 0 = tacada reta (branca, objeto e cacapa alinhados)
-  const cut = 180 - angleBetween({x:C.x-O.x,y:C.y-O.y}, {x:Q.x-O.x,y:Q.y-O.y});
+  // angulo de corte = angulo entre a linha 1 (objeto->cacapa) e a linha 2 (branca->fantasma),
+  // tomado como o angulo agudo (0..90). Mesmas retas que aparecem desenhadas.
+  const angL = angleBetween({x:C.x-O.x,y:C.y-O.y}, {x:F.x-Q.x,y:F.y-Q.y});
+  const cut = Math.min(angL, 180-angL);
 
   return {C,O,Q,P,F,A,t1,t2,afrac,cut};
 }
@@ -267,7 +269,26 @@ function dynamicLayer(){
 
   // linha 2: branca -> A (azul tracejada com seta), da borda da branca ate A
   s += dashLineToPoint(g.Q, g.A, BALL, 'var(--line2)', true);
-  s += `<text class="lbl" fill="var(--line2)" x="${(g.Q.x+g.A.x)/2-44}" y="${(g.Q.y+g.A.y)/2}">linha 2</text>`;
+  // label "linha 2": preferir a mesma altura do "linha 1", sobre a linha 2.
+  // se isso jogar o label para fora do feltro, reposicionar entre o ponto A e a objeto.
+  {
+    const yL1 = (g.C.y+g.O.y)/2;
+    const uy2 = (g.A.y-g.Q.y);
+    let lx, ly;
+    if(Math.abs(uy2)>1e-6){
+      const xOnLine = g.Q.x + (g.A.x-g.Q.x)*((yL1-g.Q.y)/uy2);
+      lx = xOnLine - 40; ly = yL1;   // -40 = recuo do texto para a esquerda da linha
+    } else { lx = -999; ly = yL1; }
+    // limites uteis do feltro (com margem p/ caber a palavra "linha 2", ~52px de largura)
+    const okX = (lx >= L+6) && (lx+52 <= R-6);
+    const okY = (ly >= T+6) && (ly <= B-6);
+    if(!okX || !okY){
+      // fallback: ponto medio entre A e objeto, sobre a linha 2
+      const mxp=(g.A.x+g.O.x)/2, myp=(g.A.y+g.O.y)/2;
+      lx = mxp - 40; ly = myp;
+    }
+    s += `<text class="lbl" fill="var(--line2)" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}">linha 2</text>`;
+  }
 
   // linha 1: cacapa -> objeto (verde tracejada), desenhada por cima da linha 2
   s += dashLine(g.C, g.O, POCKET, BALL, 'var(--line1)');
@@ -310,19 +331,40 @@ function dynamicLayer(){
   // branca ataca (direcao objeto->fantasma, oposta a caçapa). overlap = 1 - sin(corte).
   if(showCover){
     const cov = Math.max(0, Math.min(1, 1 - Math.sin(g.cut*Math.PI/180)));
-    // direcao objeto->fantasma (lado oposto a cacapa = de onde a branca vem)
-    let dx=g.F.x-g.O.x, dy=g.F.y-g.O.y; const dn=Math.hypot(dx,dy)||1; dx/=dn; dy/=dn;
-    // bola de recobrimento recuada da objeto nessa direcao; dist centro-centro = 2*BALL*(1-cov)
-    const dist = 2*BALL*(1-cov);
-    const Rx = g.O.x + dx*dist, Ry = g.O.y + dy*dist;
     const COVCOL = '#37c0d8';
+    // distancia centro-a-centro que produz a area de sobreposicao desejada.
+    // (a area de interseccao entre dois circulos de mesmo raio depende so dessa distancia)
+    const dist = 2*BALL*(1-cov);
+    // queremos o CENTRO da bola ciano sobre a LINHA 2 (reta real da branca: Q -> F),
+    // a essa mesma distancia 'dist' do centro da objeto. Resolvemos a interseccao da
+    // reta 2 com o circulo de raio 'dist' centrado na objeto, e escolhemos o ponto do
+    // lado de onde a branca vem (mais proximo da branca Q).
+    let ux=g.F.x-g.Q.x, uy=g.F.y-g.Q.y; const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un; // dir da tacada
+    // ponto da reta mais proximo da objeto: projecao de O sobre a reta
+    const wx=g.O.x-g.Q.x, wy=g.O.y-g.Q.y;
+    const proj=wx*ux+wy*uy;            // parametro do pe da perpendicular
+    const footx=g.Q.x+ux*proj, footy=g.Q.y+uy*proj;
+    const perpd=Math.hypot(g.O.x-footx, g.O.y-footy);  // dist da objeto a reta
+    let Rx, Ry;
+    if(perpd<=dist){
+      const half=Math.sqrt(Math.max(0,dist*dist-perpd*perpd));
+      // dois pontos: foot +- half*u. escolher o do lado da branca (menor parametro)
+      Rx=footx-ux*half; Ry=footy-uy*half;   // lado de onde a branca vem
+    } else {
+      // reta nao alcanca essa distancia (raro); cai no pe da perpendicular
+      Rx=footx; Ry=footy;
+    }
     s += `<clipPath id="oclip"><circle cx="${g.O.x}" cy="${g.O.y}" r="${BALL}"/></clipPath>`;
     s += `<g clip-path="url(#oclip)"><circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="${BALL}" fill="${COVCOL}" fill-opacity="0.45"/></g>`;
     s += `<circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="${BALL}" fill="none" stroke="${COVCOL}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
-    // diametro tracejado (ao longo do eixo da tacada dx,dy) + ponto central
-    const d1x=Rx-dx*BALL, d1y=Ry-dy*BALL, d2x=Rx+dx*BALL, d2y=Ry+dy*BALL;
+    // diametro tracejado (ao longo da linha 2) + ponto central
+    const d1x=Rx-ux*BALL, d1y=Ry-uy*BALL, d2x=Rx+ux*BALL, d2y=Ry+uy*BALL;
     s += `<line x1="${d1x.toFixed(1)}" y1="${d1y.toFixed(1)}" x2="${d2x.toFixed(1)}" y2="${d2y.toFixed(1)}" stroke="${COVCOL}" stroke-width="1" stroke-dasharray="3 3"/>`;
     s += `<circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="2.4" fill="${COVCOL}"/>`;
+    // perpendicular (tracejada): une o centro da objeto ao centro da ciano (pe na linha 2)
+    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${Rx.toFixed(1)}" y2="${Ry.toFixed(1)}" stroke="${COVCOL}" stroke-width="1.4" stroke-dasharray="4 3"/>`;
+    // direcao objeto->fantasma (usada adiante para posicionar o texto)
+    let dx=g.F.x-g.O.x, dy=g.F.y-g.O.y; const dn=Math.hypot(dx,dy)||1; dx/=dn; dy/=dn;
 
     // ---- posicao do texto do recobrimento: quadrante LIVRE, calculado dinamicamente ----
     // Raciocinio: ao redor da bola objeto, dois quadrantes estao tipicamente ocupados e
@@ -346,7 +388,7 @@ function dynamicLayer(){
     const ty = g.O.y + perp.y*off;
     // ancoragem horizontal conforme o texto fica a esquerda/direita da objeto
     const anchor = perp.x>0.2 ? 'start' : perp.x<-0.2 ? 'end' : 'middle';
-    s += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" fill="${COVCOL}" font-size="13" font-weight="700">${coverShort(cov)} · ${cov.toFixed(2)}</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" fill="${COVCOL}" font-size="13" font-weight="700">${coverShort(cov)} · ${cov.toFixed(2)} · corte ${g.cut.toFixed(0)}°</text>`;
   }
   s += `<circle class="ball" data-b="cue" cx="${g.Q.x}" cy="${g.Q.y}" r="${BALL}" fill="#f7f5ef" stroke="#9a988f" stroke-width="1.5"/>`;
   s += `<text class="bl" x="${g.Q.x}" y="${g.Q.y+1}" text-anchor="middle" dominant-baseline="middle" fill="#555">B</text>`;
@@ -449,7 +491,23 @@ function arc(center, toward, r, color, label){
   // label na bissetriz, um pouco fora do arco
   let mdx = (1+ddx)/2, mdy = (0+ddy)/2;
   const mn = Math.hypot(mdx,mdy)||1; mdx/=mn; mdy/=mn;
-  s += `<text class="lbl" fill="${color}" x="${(center.x+mdx*(r+14)).toFixed(1)}" y="${(center.y+mdy*(r+14)+4).toFixed(1)}" text-anchor="middle">${label}</text>`;
+  s += `<text class="lbl" fill="${color}" x="${(center.x+mdx*(r+26)).toFixed(1)}" y="${(center.y+mdy*(r+26)+4).toFixed(1)}" text-anchor="middle">${label}</text>`;
+  return s;
+}
+
+function arc2(center, A, Bp, r, color, label){
+  // arco entre as direcoes center->A e center->Bp (o angulo de corte), com label na bissetriz
+  let ax=A.x-center.x, ay=A.y-center.y; let an=Math.hypot(ax,ay)||1; ax/=an; ay/=an;
+  let bx=Bp.x-center.x, by=Bp.y-center.y; let bn=Math.hypot(bx,by)||1; bx/=bn; by/=bn;
+  const sx=center.x+ax*r, sy=center.y+ay*r;
+  const ex=center.x+bx*r, ey=center.y+by*r;
+  // determinar varredura pelo sinal do produto vetorial (menor arco)
+  const cross = ax*by - ay*bx;
+  const sweep = cross>0 ? 1 : 0;
+  let s = `<path d="M ${sx.toFixed(1)} ${sy.toFixed(1)} A ${r} ${r} 0 0 ${sweep} ${ex.toFixed(1)} ${ey.toFixed(1)}" fill="none" stroke="${color}" stroke-width="1.6"/>`;
+  // bissetriz
+  let mx=ax+bx, my=ay+by; const mn=Math.hypot(mx,my)||1; mx/=mn; my/=mn;
+  s += `<text class="lbl" fill="${color}" x="${(center.x+mx*(r+44)).toFixed(1)}" y="${(center.y+my*(r+44)+4).toFixed(1)}" text-anchor="middle">${label}</text>`;
   return s;
 }
 
