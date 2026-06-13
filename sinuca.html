@@ -76,10 +76,10 @@
       <div class="row"><span>Ponto A (fração da tabela)</span><span class="v" id="afrac">–</span></div>
       <div class="row"><span>γ (ângulo de corte)</span><span class="v" id="cut">–</span></div>
       <div class="toggles">
-        <label class="tg"><input type="checkbox" id="showGhost" checked> mostrar bola fantasma</label>
-        <label class="tg"><input type="checkbox" id="showAngles" checked> mostrar ângulos</label>
-        <label class="tg"><input type="checkbox" id="showGrid" checked> mostrar grade de frações</label>
-        <label class="tg"><input type="checkbox" id="showCover" checked> mostrar recobrimento</label>
+        <label class="tg"><input type="checkbox" id="showGhost"> mostrar bola fantasma</label>
+        <label class="tg"><input type="checkbox" id="showAngles"> mostrar ângulos</label>
+        <label class="tg"><input type="checkbox" id="showGrid"> mostrar grade de frações</label>
+        <label class="tg"><input type="checkbox" id="showCover"> mostrar recobrimento</label>
         <label class="tg"><input type="checkbox" id="realShot"> tacada real (arrastar ponto A)</label>
         <label class="tg"><input type="checkbox" id="show180"> método 180 − α (aproximado)</label>
         <label class="tg"><input type="checkbox" id="showTri"> mostrar triângulos</label>
@@ -248,6 +248,41 @@ function compute(){
   }
 
   return {C,O,Q,P,F,A,t1,t2,afrac,cut,real};
+}
+
+// ---- acha o ponto A na tabela alvo que produz um dado ANGULO DE CORTE real ----
+// Varre o rail da caçapa alvo, simula a tacada real para cada A candidato e devolve
+// o A cujo corte real ~= cutTgt E cuja saida da objeto aponta mais para a caçapa
+// (mesmo criterio do botao "meia bola"). Salva/restaura o realA atual. null se nao achar.
+function findAforCut(cutTgt, tol){
+  const tg=state.target;
+  const rail=(tg==='SE'||tg==='SD')?'T':(tg==='IE'||tg==='ID')?'B':(tg==='ME')?'L':'R';
+  const g0=compute();
+  const C=g0.C, O=g0.O;
+  let cdx=C.x-O.x, cdy=C.y-O.y; const cn=Math.hypot(cdx,cdy)||1; cdx/=cn; cdy/=cn;
+  const saved=realA;
+  let best=null, bestScore=-1e9;
+  const N=240;
+  for(let i=0;i<=N;i++){
+    let ax,ay;
+    if(rail==='T'){ ay=T; ax=L+(R-L)*i/N; }
+    else if(rail==='B'){ ay=B; ax=L+(R-L)*i/N; }
+    else if(rail==='L'){ ax=L; ay=T+(B-T)*i/N; }
+    else { ax=R; ay=T+(B-T)*i/N; }
+    realA={x:ax,y:ay,rail};
+    const g=compute();
+    if(g.real && g.real.hitsObj){
+      const a=angleBetween({x:g.real.dirObj.x,y:g.real.dirObj.y},{x:-g.real.u.x,y:-g.real.u.y});
+      const cutR=Math.min(a,180-a);
+      if(Math.abs(cutR-cutTgt)<tol){
+        const align = g.real.dirObj.x*cdx + g.real.dirObj.y*cdy;
+        const score = align - Math.abs(cutR-cutTgt)*0.05;
+        if(score>bestScore){ bestScore=score; best={x:ax,y:ay,rail}; }
+      }
+    }
+  }
+  realA=saved;
+  return best;
 }
 
 // intersecta a reta (origin + t*dir, t>0) com a primeira tabela que encontrar para frente
@@ -478,6 +513,33 @@ function dynamicLayer(){
     s += `<circle cx="${g.F.x}" cy="${g.F.y}" r="${BALL}" fill="none" stroke="var(--ghost)" stroke-width="1.6" stroke-dasharray="4 3"/>`;
     s += `<circle cx="${g.F.x}" cy="${g.F.y}" r="2.4" fill="var(--ghost)"/>`;
     s += `<text class="lbl" fill="var(--ghost)" x="${g.F.x}" y="${g.F.y+BALL+14}" text-anchor="middle">fantasma "F"</text>`;
+  }
+
+  // modo real: marcas de recobrimento na tabela do ponto A.
+  // onde mirar A para cada cobertura padrao (1/4, 1/2, 3/4 de bola).
+  // cobertura = 1 - sin(corte)  =>  corte alvo = asin(1 - cobertura).
+  if(isReal){
+    const MKCOL = '#37c0d8';
+    const marks = [{cov:0.25,lbl:'1/4'},{cov:0.50,lbl:'1/2'},{cov:0.75,lbl:'3/4'}];
+    for(const m of marks){
+      const cutTgt = Math.asin(Math.max(0,Math.min(1,1-m.cov)))*180/Math.PI;
+      const P = findAforCut(cutTgt, 2.5);
+      if(!P) continue;
+      if(P.rail==='T'||P.rail==='B'){
+        const y0 = P.rail==='T'?T:B;
+        const ly = P.rail==='T'? T+15 : B-9;     // rotulo no lado do feltro
+        s += `<line x1="${P.x.toFixed(1)}" y1="${(y0-7).toFixed(1)}" x2="${P.x.toFixed(1)}" y2="${(y0+7).toFixed(1)}" stroke="${MKCOL}" stroke-width="2"/>`;
+        s += `<circle cx="${P.x.toFixed(1)}" cy="${y0}" r="2.6" fill="${MKCOL}"/>`;
+        s += `<text x="${P.x.toFixed(1)}" y="${ly}" text-anchor="middle" fill="${MKCOL}" font-size="10" font-weight="700">${m.lbl}</text>`;
+      } else {
+        const x0 = P.rail==='L'?L:R;
+        const lx = P.rail==='L'? L+13 : R-13;
+        const anchor = P.rail==='L'?'start':'end';
+        s += `<line x1="${(x0-7).toFixed(1)}" y1="${P.y.toFixed(1)}" x2="${(x0+7).toFixed(1)}" y2="${P.y.toFixed(1)}" stroke="${MKCOL}" stroke-width="2"/>`;
+        s += `<circle cx="${x0}" cy="${P.y.toFixed(1)}" r="2.6" fill="${MKCOL}"/>`;
+        s += `<text x="${lx}" y="${(P.y+3).toFixed(1)}" text-anchor="${anchor}" fill="${MKCOL}" font-size="10" font-weight="700">${m.lbl}</text>`;
+      }
+    }
   }
 
   // ponto A: no modo real e arrastavel (e o alvo da mira), maior e com classe ball
@@ -830,35 +892,7 @@ document.getElementById('btnIdeal').addEventListener('click',()=>{
 // "meia bola": ajusta a mira para que o corte real seja ~30° (recobrimento de meia bola),
 // escolhendo o lado (esq/dir da objeto) cuja trajetoria real da objeto aponta para a caçapa.
 document.getElementById('btnHalf').addEventListener('click',()=>{
-  const tg=state.target;
-  const rail=(tg==='SE'||tg==='SD')?'T':(tg==='IE'||tg==='ID')?'B':(tg==='ME')?'L':'R';
-  const g0=compute();
-  const C=g0.C, O=g0.O;
-  // direcao ideal de saida da objeto (rumo a cacapa), normalizada
-  let cdx=C.x-O.x, cdy=C.y-O.y; const cn=Math.hypot(cdx,cdy)||1; cdx/=cn; cdy/=cn;
-  let best=null, bestScore=-1e9;
-  const N=240;
-  for(let i=0;i<=N;i++){
-    let ax,ay;
-    if(rail==='T'){ ay=T; ax=L+(R-L)*i/N; }
-    else if(rail==='B'){ ay=B; ax=L+(R-L)*i/N; }
-    else if(rail==='L'){ ax=L; ay=T+(B-T)*i/N; }
-    else { ax=R; ay=T+(B-T)*i/N; }
-    realA={x:ax,y:ay,rail};
-    const g=compute();
-    if(g.real && g.real.hitsObj){
-      const a=angleBetween({x:g.real.dirObj.x,y:g.real.dirObj.y},{x:-g.real.u.x,y:-g.real.u.y});
-      const cutR=Math.min(a,180-a);
-      // so consideramos pontos perto de 30° (meia bola)
-      if(Math.abs(cutR-30)<3){
-        // entre eles, preferir o que manda a objeto mais na direcao da cacapa
-        const align = g.real.dirObj.x*cdx + g.real.dirObj.y*cdy; // produto escalar (quanto maior, melhor)
-        const score = align - Math.abs(cutR-30)*0.05;
-        if(score>bestScore){ bestScore=score; best={x:ax,y:ay,rail}; }
-      }
-    }
-  }
-  realA = best || realA;
+  realA = findAforCut(30,3) || realA;   // meia bola = corte real ~30°
   render();
 });
 
