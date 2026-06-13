@@ -75,6 +75,8 @@
         <label class="tg"><input type="checkbox" id="showGhost" checked> mostrar bola fantasma</label>
         <label class="tg"><input type="checkbox" id="showAngles" checked> mostrar ângulos</label>
         <label class="tg"><input type="checkbox" id="showGrid" checked> mostrar grade de frações</label>
+        <label class="tg"><input type="checkbox" id="showCover" checked> mostrar recobrimento</label>
+        <label class="tg"><input type="checkbox" id="showTri"> mostrar triângulos</label>
       </div>
     </div>
     <div class="panel calcpanel">
@@ -244,7 +246,24 @@ function dynamicLayer(){
   const g = compute();
   const showGhost = document.getElementById('showGhost').checked;
   const showAng = document.getElementById('showAngles').checked;
+  const showTri = document.getElementById('showTri').checked;
+  const showCover = document.getElementById('showCover').checked;
   let s='';
+
+  // triangulos semelhantes (por baixo de tudo): pequeno B->F, grande B->A
+  // angulo reto no vertice B; cateto vertical sobe de B ate a altura do alvo
+  if(showTri){
+    const Bx=g.Q.x, By=g.Q.y, Fx=g.F.x, Fy=g.F.y, Ax=g.A.x, Ay=g.A.y;
+    // grande: B, canto(Bx,Ay), A
+    s += `<polygon points="${Bx},${By} ${Bx},${Ay} ${Ax},${Ay}" fill="#ffd24a" fill-opacity="0.18" stroke="#ffd24a" stroke-width="1.5"/>`;
+    // pequeno: B, canto(Bx,Fy), F
+    s += `<polygon points="${Bx},${By} ${Bx},${Fy} ${Fx},${Fy}" fill="#ffffff" fill-opacity="0.28" stroke="#ffffff" stroke-width="1.5"/>`;
+    // rotulos dos catetos
+    s += `<text class="trilbl" fill="#ffffff" x="${Bx-8}" y="${(By+Fy)/2}" text-anchor="end">Fy − By</text>`;
+    s += `<text class="trilbl" fill="#ffffff" x="${(Bx+Fx)/2}" y="${Fy-6}" text-anchor="middle">Fx − Bx</text>`;
+    s += `<text class="trilbl" fill="#ffd24a" x="${Bx-8}" y="${(By+Ay)/2-40}" text-anchor="end">1 − By</text>`;
+    s += `<text class="trilbl" fill="#ffd24a" x="${(Bx+Ax)/2}" y="${Ay-6}" text-anchor="middle">A − Bx</text>`;
+  }
 
   // linha 2: branca -> A (azul tracejada com seta), da borda da branca ate A
   s += dashLineToPoint(g.Q, g.A, BALL, 'var(--line2)', true);
@@ -287,6 +306,48 @@ function dynamicLayer(){
   // bolas arrastaveis (objeto e branca)
   s += `<circle class="ball" data-b="obj" cx="${g.O.x}" cy="${g.O.y}" r="${BALL}" fill="var(--obj)" stroke="var(--objb)" stroke-width="1.5"/>`;
   s += `<text class="bl" x="${g.O.x}" y="${g.O.y+1}" text-anchor="middle" dominant-baseline="middle" fill="#fff">obj</text>`;
+  // OPCAO 1 (versao B): bola de recobrimento encostada na objeto, no lado de onde a
+  // branca ataca (direcao objeto->fantasma, oposta a caçapa). overlap = 1 - sin(corte).
+  if(showCover){
+    const cov = Math.max(0, Math.min(1, 1 - Math.sin(g.cut*Math.PI/180)));
+    // direcao objeto->fantasma (lado oposto a cacapa = de onde a branca vem)
+    let dx=g.F.x-g.O.x, dy=g.F.y-g.O.y; const dn=Math.hypot(dx,dy)||1; dx/=dn; dy/=dn;
+    // bola de recobrimento recuada da objeto nessa direcao; dist centro-centro = 2*BALL*(1-cov)
+    const dist = 2*BALL*(1-cov);
+    const Rx = g.O.x + dx*dist, Ry = g.O.y + dy*dist;
+    const COVCOL = '#37c0d8';
+    s += `<clipPath id="oclip"><circle cx="${g.O.x}" cy="${g.O.y}" r="${BALL}"/></clipPath>`;
+    s += `<g clip-path="url(#oclip)"><circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="${BALL}" fill="${COVCOL}" fill-opacity="0.45"/></g>`;
+    s += `<circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="${BALL}" fill="none" stroke="${COVCOL}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+    // diametro tracejado (ao longo do eixo da tacada dx,dy) + ponto central
+    const d1x=Rx-dx*BALL, d1y=Ry-dy*BALL, d2x=Rx+dx*BALL, d2y=Ry+dy*BALL;
+    s += `<line x1="${d1x.toFixed(1)}" y1="${d1y.toFixed(1)}" x2="${d2x.toFixed(1)}" y2="${d2y.toFixed(1)}" stroke="${COVCOL}" stroke-width="1" stroke-dasharray="3 3"/>`;
+    s += `<circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="2.4" fill="${COVCOL}"/>`;
+
+    // ---- posicao do texto do recobrimento: quadrante LIVRE, calculado dinamicamente ----
+    // Raciocinio: ao redor da bola objeto, dois quadrantes estao tipicamente ocupados e
+    // ficam aproximadamente SOBRE A MESMA RETA (a reta de tacada / linha caçapa-objeto):
+    //   - lado da caçapa  -> ocupado pela linha 1 (objeto -> C)
+    //   - lado oposto     -> ocupado pela fantasma, pela bola de recobrimento e pela linha 2
+    // Logo, os quadrantes livres sao os PERPENDICULARES a essa reta. Colocamos o texto
+    // na perpendicular ao vetor objeto->fantasma (dx,dy). Existem dois lados perpendiculares
+    // possiveis: (-dy,dx) e (dy,-dx). Escolhemos o que aponta MAIS PARA DENTRO da mesa
+    // (longe das bordas), testando qual leva o texto para mais perto do centro do feltro.
+    // Como branca, objeto, caçapa e a geometria toda entram em dx/dy, esse calculo se
+    // re-resolve sozinho sempre que o usuario arrasta uma bola ou troca a caçapa.
+    const perp1 = {x:-dy, y:dx}, perp2 = {x:dy, y:-dx};
+    const cxM=(L+R)/2, cyM=(T+B)/2;            // centro do feltro
+    const probe = 60;                           // distancia de teste para avaliar o lado
+    const d1 = Math.hypot(g.O.x+perp1.x*probe-cxM, g.O.y+perp1.y*probe-cyM);
+    const d2 = Math.hypot(g.O.x+perp2.x*probe-cxM, g.O.y+perp2.y*probe-cyM);
+    const perp = (d1<=d2) ? perp1 : perp2;      // lado que cai mais para dentro
+    const off = BALL+18;
+    const tx = g.O.x + perp.x*off;
+    const ty = g.O.y + perp.y*off;
+    // ancoragem horizontal conforme o texto fica a esquerda/direita da objeto
+    const anchor = perp.x>0.2 ? 'start' : perp.x<-0.2 ? 'end' : 'middle';
+    s += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" fill="${COVCOL}" font-size="13" font-weight="700">${coverShort(cov)} · ${cov.toFixed(2)}</text>`;
+  }
   s += `<circle class="ball" data-b="cue" cx="${g.Q.x}" cy="${g.Q.y}" r="${BALL}" fill="#f7f5ef" stroke="#9a988f" stroke-width="1.5"/>`;
   s += `<text class="bl" x="${g.Q.x}" y="${g.Q.y+1}" text-anchor="middle" dominant-baseline="middle" fill="#555">B</text>`;
 
@@ -303,6 +364,22 @@ function dynamicLayer(){
   // ---- memoria de calculo de A (em fracao de mesa) ----
   buildCalc(g, frac, railName);
   return s;
+}
+
+function coverName(f){
+  // f = fracao coberta (0..1)
+  if(f>=0.92) return 'cheia';
+  if(f>=0.625) return '¾ bola';
+  if(f>=0.375) return '½ bola (meia)';
+  if(f>=0.125) return '¼ bola';
+  return 'fina';
+}
+function coverShort(f){
+  if(f>=0.92) return 'cheia';
+  if(f>=0.625) return '3/4 bola';
+  if(f>=0.375) return '1/2 bola';
+  if(f>=0.125) return '1/4 bola';
+  return 'fina';
 }
 
 function buildCalc(g, frac, railName){
@@ -389,6 +466,7 @@ function defs(){
       .Atag{font-size:16px;font-weight:700;font-family:inherit}
       .ctag{font-size:13px;font-weight:700;font-family:inherit}
       .axislbl{fill:#f0e9d8;font-size:12px;font-family:inherit;font-weight:600}
+      .trilbl{font-size:12px;font-family:inherit;font-weight:600}
     </style></defs>`;
 }
 
@@ -447,7 +525,7 @@ window.addEventListener('mouseup',endDrag);
 window.addEventListener('touchend',endDrag);
 
 // ---- controles ----
-['showGhost','showAngles','showGrid'].forEach(id=>
+['showGhost','showAngles','showGrid','showTri','showCover'].forEach(id=>
   document.getElementById(id).addEventListener('change',render));
 
 buildPocketButtons();
