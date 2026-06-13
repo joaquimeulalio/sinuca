@@ -24,6 +24,8 @@
   .ball:active{cursor:grabbing}
   .panel{flex:0 0 260px;background:var(--panel);border:1px solid var(--panel-line);
     border-radius:12px;padding:16px}
+  .rightcol{flex:0 0 260px;display:flex;flex-direction:column;gap:14px}
+  .rightcol .panel{flex:0 0 auto}
   .panel h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;
     color:var(--muted);margin:0 0 10px}
   .row{display:flex;justify-content:space-between;align-items:baseline;
@@ -43,6 +45,14 @@
     background:#fff;color:var(--felt);border-radius:8px;font-size:13px;
     font-weight:600;cursor:pointer}
   .reset:hover{background:var(--felt);color:#fff}
+  .calc{font-size:13px;line-height:1.6;color:var(--ink)}
+  .calc .step{padding:5px 0;border-bottom:1px solid var(--panel-line)}
+  .calc .step:last-child{border-bottom:0}
+  .calc .formula{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;
+    color:var(--felt);background:#fff;border:1px solid var(--panel-line);
+    border-radius:6px;padding:4px 7px;margin-top:5px;display:block;width:fit-content}
+  .calc .formula.gen{color:var(--muted);background:transparent;border-style:dashed}
+  .calc b{font-weight:600}
 </style>
 </head>
 <body>
@@ -52,6 +62,7 @@
     <div class="stage">
       <svg id="table" viewBox="0 0 600 760" role="img" aria-label="Mesa de sinuca interativa"></svg>
     </div>
+    <div class="rightcol">
     <div class="panel">
       <h2>Caçapa alvo</h2>
       <div class="pockets" id="pockets"></div>
@@ -65,8 +76,11 @@
         <label class="tg"><input type="checkbox" id="showAngles" checked> mostrar ângulos</label>
         <label class="tg"><input type="checkbox" id="showGrid" checked> mostrar grade de frações</label>
       </div>
-      <button class="reset" id="reset">Voltar ao padrão</button>
-      <p class="hint">A reta de tacada (linha 2) passa pelo centro da bola fantasma — a posição da branca no instante do impacto, uma bola além da objeto na direção oposta à caçapa. O ponto A é onde essa reta encontra a tabela.</p>
+    </div>
+    <div class="panel calcpanel">
+      <h2>Como A foi calculado</h2>
+      <div class="calc" id="calc"></div>
+    </div>
     </div>
   </div>
 
@@ -110,10 +124,28 @@ function buildStatic(){
   s += `<rect x="${L}" y="${T}" width="${W}" height="${H}" rx="6" fill="var(--felt)"/>`;
   s += `<rect x="${L}" y="${T}" width="${W}" height="${H}" rx="6" fill="none" stroke="var(--felt-dark)" stroke-width="2"/>`;
   // labels das tabelas
-  s += `<text class="tbl" x="${(L+R)/2}" y="${T-22}" text-anchor="middle">Tabela 1 (superior)</text>`;
+  s += `<text class="tbl" x="${(L+R)/2}" y="${T-27}" text-anchor="middle">Tabela 1 (superior)</text>`;
   s += `<text class="tbl" x="${(L+R)/2}" y="${B+34}" text-anchor="middle">Tabela 3 (inferior)</text>`;
   s += `<text class="tbl" x="${L-30}" y="${(T+B)/2}" text-anchor="middle" transform="rotate(-90 ${L-30} ${(T+B)/2})">Tabela 4 (esquerda)</text>`;
   s += `<text class="tbl" x="${R+30}" y="${(T+B)/2}" text-anchor="middle" transform="rotate(90 ${R+30} ${(T+B)/2})">Tabela 2 (direita)</text>`;
+  return s;
+}
+
+function axisLayer(){
+  // origem no canto inferior esquerdo do feltro (L,B). x->direita, y->cima.
+  const ox=L+14, oy=B-14;     // recuado um pouco para dentro do feltro
+  const len=46;
+  const col='#f0e9d8';
+  let s='';
+  // eixo x
+  s+=`<line x1="${ox}" y1="${oy}" x2="${ox+len}" y2="${oy}" stroke="${col}" stroke-width="1.6" marker-end="url(#axis)"/>`;
+  // eixo y (para cima)
+  s+=`<line x1="${ox}" y1="${oy}" x2="${ox}" y2="${oy-len}" stroke="${col}" stroke-width="1.6" marker-end="url(#axis)"/>`;
+  // rotulos
+  s+=`<text class="axislbl" x="${ox+len+4}" y="${oy+4}">x</text>`;
+  s+=`<text class="axislbl" x="${ox-3}" y="${oy-len-6}" text-anchor="middle">y</text>`;
+  s+=`<text class="axislbl" x="${ox+6}" y="${oy+13}">0,0</text>`;
+  s+=`<circle cx="${ox}" cy="${oy}" r="2.4" fill="${col}"/>`;
   return s;
 }
 
@@ -235,13 +267,22 @@ function dynamicLayer(){
   if(showGhost){
     s += `<circle cx="${g.F.x}" cy="${g.F.y}" r="${BALL}" fill="none" stroke="var(--ghost)" stroke-width="1.6" stroke-dasharray="4 3"/>`;
     s += `<circle cx="${g.F.x}" cy="${g.F.y}" r="2.4" fill="var(--ghost)"/>`;
-    s += `<text class="lbl" fill="var(--ghost)" x="${g.F.x}" y="${g.F.y+BALL+14}" text-anchor="middle">fantasma</text>`;
+    s += `<text class="lbl" fill="var(--ghost)" x="${g.F.x}" y="${g.F.y+BALL+14}" text-anchor="middle">fantasma "F"</text>`;
   }
 
   // ponto A
   s += `<circle cx="${g.A.x}" cy="${g.A.y}" r="6" fill="var(--A)"/>`;
-  const ay = (g.A.rail==='T')? g.A.y-12 : g.A.y+20;
-  s += `<text class="Atag" x="${g.A.x+(g.A.rail==='R'?-14:12)}" y="${ay}" text-anchor="middle" fill="var(--A)">A</text>`;
+  // fracao ao longo da tabela atingida (mesma usada no painel)
+  let Afrac;
+  if(g.A.rail==='T'||g.A.rail==='B') Afrac=(g.A.x-L)/W; else Afrac=(g.A.y-T)/H;
+  const Apct = Math.round(Afrac*100)+'%';
+  // posicao do label: na tabela superior, na faixa de madeira acima do ponto
+  // (abaixo do texto "Tabela 1" em y=T-22, acima da bolinha em y=T)
+  let alx=g.A.x, aly;
+  if(g.A.rail==='T') aly=T-9;
+  else if(g.A.rail==='B') aly=B+16;
+  else { alx=g.A.x+(g.A.rail==='R'?-26:26); aly=g.A.y+5; }
+  s += `<text class="Atag" x="${alx}" y="${aly}" text-anchor="middle" fill="var(--A)">A ${Apct}</text>`;
 
   // bolas arrastaveis (objeto e branca)
   s += `<circle class="ball" data-b="obj" cx="${g.O.x}" cy="${g.O.y}" r="${BALL}" fill="var(--obj)" stroke="var(--objb)" stroke-width="1.5"/>`;
@@ -258,7 +299,51 @@ function dynamicLayer(){
   if(g.A.rail==='T'||g.A.rail==='B') frac=(g.A.x-L)/W; else frac=(g.A.y-T)/H;
   document.getElementById('afrac').innerHTML = frac.toFixed(2)+' <span style="color:var(--muted);font-weight:400">('+railName+')</span>';
   document.getElementById('cut').textContent = g.cut.toFixed(1)+'°';
+
+  // ---- memoria de calculo de A (em fracao de mesa) ----
+  buildCalc(g, frac, railName);
   return s;
+}
+
+function buildCalc(g, frac, railName){
+  // origem no canto INFERIOR esquerdo: x cresce p/ direita, y cresce p/ cima
+  // y=0 na Tabela 3 (inferior, pixel B), y=1 na Tabela 1 (superior, pixel T)
+  const fx = v => (v-L)/W, fy = v => (B-v)/H;
+  const Qx=fx(g.Q.x), Qy=fy(g.Q.y);
+  const Fx=fx(g.F.x), Fy=fy(g.F.y);
+  const horiz = (g.A.rail==='T'||g.A.rail==='B');
+  // alvo da tabela em fracao: y=0 (T), y=1 (B), x=0 (L), x=1 (R)
+  let railEq, t, Aaxis;
+  const p2 = n => n.toFixed(2);
+  let html='';
+  html += `<div class="step">A reta de tacada vai da <b>branca</b> ao <b>centro da fantasma</b>, em fração de mesa:`
+        + `<span class="formula">B = (${p2(Qx)} ; ${p2(Qy)})</span>`
+        + `<span class="formula">F = (${p2(Fx)} ; ${p2(Fy)})</span></div>`;
+  if(horiz){
+    const railY = (g.A.rail==='T')?1:0;
+    t = (railY - Qy)/(Fy - Qy);
+    Aaxis = Qx + (Fx - Qx)*t;
+    html += `<div class="step">Avançamos da branca em direção à fantasma até a <b>${railName}</b> (y = ${railY}). `
+          + `Quantas vezes esticar:`
+          + `<span class="formula gen">t = (${railY} − By) ÷ (Fy − By)</span>`
+          + `<span class="formula">t = (${railY} − ${p2(Qy)}) ÷ (${p2(Fy)} − ${p2(Qy)}) = ${t.toFixed(2)}</span></div>`;
+    html += `<div class="step">Posição horizontal de A:`
+          + `<span class="formula gen">A = Bx + (Fx − Bx) × t</span>`
+          + `<span class="formula">A = ${p2(Qx)} + (${p2(Fx)} − ${p2(Qx)}) × ${t.toFixed(2)} = ${Aaxis.toFixed(2)}</span></div>`;
+  } else {
+    const railX = (g.A.rail==='L')?0:1;
+    t = (railX - Qx)/(Fx - Qx);
+    Aaxis = Qy + (Fy - Qy)*t;
+    html += `<div class="step">Avançamos da branca em direção à fantasma até a <b>${railName}</b> (x = ${railX}). `
+          + `Quantas vezes esticar:`
+          + `<span class="formula gen">t = (${railX} − Bx) ÷ (Fx − Bx)</span>`
+          + `<span class="formula">t = (${railX} − ${p2(Qx)}) ÷ (${p2(Fx)} − ${p2(Qx)}) = ${t.toFixed(2)}</span></div>`;
+    html += `<div class="step">Posição de A ao longo da tabela:`
+          + `<span class="formula gen">A = By + (Fy − By) × t</span>`
+          + `<span class="formula">A = ${p2(Qy)} + (${p2(Fy)} − ${p2(Qy)}) × ${t.toFixed(2)} = ${Aaxis.toFixed(2)}</span></div>`;
+  }
+  html += `<div class="step"><b>A = ${Math.round(frac*100)}%</b> da ${railName}.</div>`;
+  document.getElementById('calc').innerHTML = html;
 }
 
 function dashLine(a,b,ra,rb,color){
@@ -294,6 +379,8 @@ function arc(center, toward, r, color, label){
 function defs(){
   return `<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
     <path d="M2 1L8 5L2 9" fill="none" stroke="var(--line2)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="axis" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#f0e9d8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <style>
       .tbl{fill:#f0e9d8;font-size:14px;font-family:inherit;font-weight:600}
       .frac{fill:#cfe8de;font-size:11px;font-family:inherit}
@@ -301,11 +388,12 @@ function defs(){
       .bl{font-size:12px;font-family:inherit;font-weight:600}
       .Atag{font-size:16px;font-weight:700;font-family:inherit}
       .ctag{font-size:13px;font-weight:700;font-family:inherit}
+      .axislbl{fill:#f0e9d8;font-size:12px;font-family:inherit;font-weight:600}
     </style></defs>`;
 }
 
 function render(){
-  SVG.innerHTML = defs() + buildStatic() + gridLayer() + pocketsLayer() + dynamicLayer();
+  SVG.innerHTML = defs() + buildStatic() + gridLayer() + axisLayer() + pocketsLayer() + dynamicLayer();
   attachDrag();
 }
 
@@ -361,9 +449,6 @@ window.addEventListener('touchend',endDrag);
 // ---- controles ----
 ['showGhost','showAngles','showGrid'].forEach(id=>
   document.getElementById(id).addEventListener('change',render));
-document.getElementById('reset').onclick=()=>{
-  state=JSON.parse(JSON.stringify(DEF)); render(); buildPocketButtons();
-};
 
 buildPocketButtons();
 render();
