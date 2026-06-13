@@ -71,10 +71,10 @@
       <h2>Caçapa alvo</h2>
       <div class="pockets" id="pockets"></div>
       <h2>Leitura</h2>
-      <div class="row"><span>θ₁ (linha 1 × horizontal)</span><span class="v" id="t1">–</span></div>
+      <div class="row"><span>α₁ (linha 1 × horizontal)</span><span class="v" id="t1">–</span></div>
       <div class="row"><span>θ₂ (linha 2 × horizontal)</span><span class="v" id="t2">–</span></div>
       <div class="row"><span>Ponto A (fração da tabela)</span><span class="v" id="afrac">–</span></div>
-      <div class="row"><span>Ângulo de corte</span><span class="v" id="cut">–</span></div>
+      <div class="row"><span>γ (ângulo de corte)</span><span class="v" id="cut">–</span></div>
       <div class="toggles">
         <label class="tg"><input type="checkbox" id="showGhost" checked> mostrar bola fantasma</label>
         <label class="tg"><input type="checkbox" id="showAngles" checked> mostrar ângulos</label>
@@ -309,6 +309,67 @@ function dynamicLayer(){
   }
 
   const isReal = realMode() && g.real;
+  let gammaPivot = null;   // intersecao das retas 1 e 2 (preenchido no bloco do arco γ)
+
+  /* ============================================================================
+     ARCO γ  --  ANGULO DE CORTE   (LER ANTES DE MEXER -- ja errei aqui)
+     ----------------------------------------------------------------------------
+     >>> LINHA 1 = TRAJETORIA REAL DA BOLA ALVO. <<<  NAO e "O->caçapa".
+         So coincide com O->caçapa no modo ideal (a mira encaçapa). No modo
+         "tacada real" a alvo sai numa direcao que pode ERRAR a caçapa -- ESSA
+         direcao e a linha 1. NUNCA tratar linha 1 como O->caçapa fixo.
+
+     γ = MENOR angulo entre a reta 1 (trajetoria da alvo) e a reta 2 (linha de
+         tiro). Depende SO das coordenadas dessas duas retas -- nao de checkbox.
+
+     VERTICE do arco = INTERSECAO das retas 1 e 2 (cada uma prolongada ate se
+         cruzarem). NAO usar O nem a fantasma como vertice: as duas retas so se
+         encontram no ponto de intersecao, e e la que o angulo visivel existe.
+
+     Definicao das retas por DOIS PONTOS cada (vigentes em cada modo):
+       reta 2 (tiro)      : Q  ->  A2            (A2 = ponto A ideal ou arrastado)
+       reta 1 (trajetoria): O  ->  fimTraj
+            modo real c/ acerto: fimTraj = g.real.objEnd  (saida real, pode errar)
+            caso contrario     : fimTraj = C              (saida ideal O->caçapa)
+     ============================================================================ */
+  {
+    const GAMMA = '#ff8c42';
+    const A2g = isReal ? g.real.Atgt : g.A;
+    // dois pontos de cada reta
+    const L2a = g.Q, L2b = A2g;                                  // linha de tiro
+    const L1a = g.O;
+    const L1b = (isReal && g.real.hitsObj && g.real.objEnd) ? g.real.objEnd : g.C; // trajetoria da alvo
+    // direcoes
+    let d2x=L2b.x-L2a.x, d2y=L2b.y-L2a.y; let n2=Math.hypot(d2x,d2y)||1; d2x/=n2; d2y/=n2;
+    let d1x=L1b.x-L1a.x, d1y=L1b.y-L1a.y; let n1=Math.hypot(d1x,d1y)||1; d1x/=n1; d1y/=n1;
+    // intersecao das duas retas: L1a + t*d1 = L2a + s*d2
+    const den = d1x*(-d2y) - d1y*(-d2x);
+    let pivot;
+    if(Math.abs(den) > 1e-6){
+      const rx=L2a.x-L1a.x, ry=L2a.y-L1a.y;
+      const t=(rx*(-d2y) - ry*(-d2x))/den;
+      pivot={x:L1a.x+d1x*t, y:L1a.y+d1y*t};
+    } else {
+      pivot={x:g.O.x, y:g.O.y};   // retas paralelas (degenerado): cai na objeto
+    }
+    // menor angulo entre as retas
+    const dd = d1x*d2x + d1y*d2y;
+    let gammaDeg = Math.acos(Math.max(-1,Math.min(1,dd)))*180/Math.PI;
+    const gamma = Math.min(gammaDeg, 180-gammaDeg);
+    // sentidos a desenhar a partir do pivot: escolher os que formam o ANGULO AGUDO
+    // (apontando para os respectivos "fins" de cada reta)
+    let s1={x:d1x,y:d1y}, s2={x:d2x,y:d2y};
+    // alinhar s1 para o lado do fim da trajetoria (L1b) e s2 para o lado do A (L2b)
+    if((L1b.x-pivot.x)*s1.x + (L1b.y-pivot.y)*s1.y < 0){ s1={x:-s1.x,y:-s1.y}; }
+    if((L2b.x-pivot.x)*s2.x + (L2b.y-pivot.y)*s2.y < 0){ s2={x:-s2.x,y:-s2.y}; }
+    // se esse par der o angulo obtuso, inverte um deles para mostrar o agudo
+    if(s1.x*s2.x + s1.y*s2.y < 0){ s2={x:-s2.x,y:-s2.y}; }
+    const R=72;
+    gammaPivot = pivot;   // expõe para o desenho da linha 1 estendida
+    const towardA={x:pivot.x+s1.x*R, y:pivot.y+s1.y*R};
+    const towardB={x:pivot.x+s2.x*R, y:pivot.y+s2.y*R};
+    s += arc2(pivot, towardA, towardB, R, GAMMA, 'γ = '+gamma.toFixed(0)+'°');
+  }
 
   // linha 2: no modo normal vai ate o A ideal; no modo real, ate o A arrastado
   const A2 = isReal ? g.real.Atgt : g.A;
@@ -331,16 +392,27 @@ function dynamicLayer(){
       const mxp=(A2.x+g.O.x)/2, myp=(A2.y+g.O.y)/2;
       lx = mxp - 40; ly = myp;
     }
-    s += `<text class="lbl" fill="var(--line2)" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}">linha 2</text>`;
+    s += `<text class="lbl" fill="var(--line2)" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}">linha 2 (linha de tiro)</text>`;
   }
 
   if(isReal){
     // linha 1 IDEAL como referencia: pontilhada clara, objeto -> cacapa
     s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.C.x}" y2="${g.C.y}" stroke="#ffe9a8" stroke-width="1.4" stroke-dasharray="2 5" opacity="0.7"/>`;
     s += `<text class="lbl" fill="#ffe9a8" x="${(g.C.x+g.O.x)/2+16}" y="${(g.C.y+g.O.y)/2}" opacity="0.85">ideal</text>`;
-    // linha 1 REAL: trajetoria de fato da objeto (amarelo forte), so se a branca acerta a objeto
+    // linha 1 REAL: trajetoria de fato da objeto (amarelo forte), so se a branca acerta a objeto.
+    // estende da INTERSECAO com a linha de tiro (gammaPivot), passando pela objeto, ate a parede.
+    // A SETA fica no FIM da reta (na parede, objEnd), apontando no sentido de saida da alvo.
     if(g.real.hitsObj && g.real.objEnd){
-      s += dashLine(g.O, g.real.objEnd, BALL, 0, 'var(--line1)');
+      // segmento da intersecao ate a borda da objeto (sem seta)
+      if(gammaPivot){
+        let vx=g.O.x-gammaPivot.x, vy=g.O.y-gammaPivot.y; const vn=Math.hypot(vx,vy)||1; vx/=vn; vy/=vn;
+        const endx=g.O.x-vx*BALL, endy=g.O.y-vy*BALL;   // para na borda da bola
+        s += `<line x1="${gammaPivot.x.toFixed(1)}" y1="${gammaPivot.y.toFixed(1)}" x2="${endx.toFixed(1)}" y2="${endy.toFixed(1)}" stroke="var(--line1)" stroke-width="2.6" stroke-dasharray="10 6"/>`;
+      }
+      // segmento da objeto ate a parede (saida real), com SETA no FIM
+      let ox=g.real.objEnd.x-g.O.x, oy=g.real.objEnd.y-g.O.y; const onn=Math.hypot(ox,oy)||1; ox/=onn; oy/=onn;
+      const sx=g.O.x+ox*BALL, sy=g.O.y+oy*BALL;
+      s += `<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${g.real.objEnd.x.toFixed(1)}" y2="${g.real.objEnd.y.toFixed(1)}" stroke="var(--line1)" stroke-width="2.6" stroke-dasharray="10 6" marker-end="url(#arr1)"/>`;
       s += `<text class="lbl" fill="var(--line1)" x="${(g.O.x+g.real.objEnd.x)/2+14}" y="${((g.O.y+g.real.objEnd.y)/2-22).toFixed(1)}">linha 1 (real)</text>`;
     }
   } else {
@@ -362,10 +434,11 @@ function dynamicLayer(){
     const dxQ=g.Q.x-g.O.x, dyQ=g.Q.y-g.O.y;
     // vertical de referencia: para baixo ou para cima, o que estiver do mesmo lado da branca
     const vy = (dyQ>=0) ? 1 : -1;
-    const vert = {x:g.O.x, y:g.O.y + vy*60};
+    // a linha vertical vai de O ate a ALTURA da branca (By), mantendo x = Ox (vertical)
+    const vert = {x:g.O.x, y:g.Q.y};
     const alpha2 = angleBetween({x:dxQ,y:dyQ},{x:0,y:vy});
-    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x}" y2="${(g.O.y+vy*60).toFixed(1)}" stroke="${M180}" stroke-width="1" stroke-dasharray="3 3"/>`;
-    s += arc2(g.O, g.Q, vert, 40, M180, 'α₂ = '+alpha2.toFixed(0)+'°');
+    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x}" y2="${g.Q.y.toFixed(1)}" stroke="${M180}" stroke-width="1" stroke-dasharray="3 3"/>`;
+    s += arc2(g.O, g.Q, vert, 62, M180, 'α₂ = '+alpha2.toFixed(0)+'°');
     const corteAp = 180-alpha;
     // regra prática por α (meia bola exata = α 150° = corte 30°):
     const d = alpha - 150;
@@ -453,28 +526,37 @@ function dynamicLayer(){
    if(covCut!==null){
     const cov = Math.max(0, Math.min(1, 1 - Math.sin(covCut*Math.PI/180)));
     const COVCOL = '#37c0d8';
-    // distancia centro-a-centro que produz a area de sobreposicao desejada.
-    // (a area de interseccao entre dois circulos de mesmo raio depende so dessa distancia)
-    const dist = 2*BALL*(1-cov);
-    // queremos o CENTRO da bola ciano sobre a LINHA 2 (reta real da branca),
-    // a essa mesma distancia 'dist' do centro da objeto. Resolvemos a interseccao da
-    // reta 2 com o circulo de raio 'dist' centrado na objeto, e escolhemos o ponto do
-    // lado de onde a branca vem (mais proximo da branca Q).
-    let ux=lineDir.x, uy=lineDir.y; const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un; // dir da tacada
-    // ponto da reta mais proximo da objeto: projecao de O sobre a reta
+    /* ============================================================================
+       PRINCIPIO GEOMETRICO DA BOLA DE RECOBRIMENTO (ciano)  --  NAO ESQUECER
+       ----------------------------------------------------------------------------
+       A bola de recobrimento representa a SOBREPOSICAO MAXIMA entre a branca e a
+       bola objeto durante a tacada.
+
+       A branca viaja ao longo da LINHA DE TIRO (linha 2). Conforme ela avanca, a
+       distancia entre o seu centro e o centro O da objeto varia. A sobreposicao
+       entre as duas bolas e MAXIMA quando essa distancia centro-a-centro e MINIMA.
+
+       O ponto da linha de tiro mais proximo de O e, por definicao, o PE DA
+       PERPENDICULAR baixada de O sobre a linha de tiro. Logo:
+
+         R (centro da bola de recobrimento) = pe da perpendicular de O sobre a linha 2.
+
+       CONSEQUENCIA GEOMETRICA EXATA: o segmento OR e SEMPRE PERPENDICULAR a linha
+       de tiro. Isso nao e aproximacao nem coincidencia visual -- e a propria
+       definicao de pe da perpendicular. Se algum dia OR aparecer obliquo a linha
+       de tiro, R foi calculado errado.
+
+       ERRO ANTIGO (corrigido): versoes anteriores colocavam R deslocado ao longo
+       da linha 2 (a uma distancia 2*BALL*(1-cov) de O), o que tornava OR obliquo e
+       NAO representava a sobreposicao maxima. O ponto correto e o pe da
+       perpendicular, e so ele.
+       ============================================================================ */
+    let ux=lineDir.x, uy=lineDir.y; const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un; // dir da linha de tiro
+    // pe da perpendicular = projecao de O sobre a linha de tiro
     const wx=g.O.x-lineFrom.x, wy=g.O.y-lineFrom.y;
-    const proj=wx*ux+wy*uy;            // parametro do pe da perpendicular
+    const proj=wx*ux+wy*uy;
     const footx=lineFrom.x+ux*proj, footy=lineFrom.y+uy*proj;
-    const perpd=Math.hypot(g.O.x-footx, g.O.y-footy);  // dist da objeto a reta
-    let Rx, Ry;
-    if(perpd<=dist){
-      const half=Math.sqrt(Math.max(0,dist*dist-perpd*perpd));
-      // dois pontos: foot +- half*u. escolher o do lado da branca (menor parametro)
-      Rx=footx-ux*half; Ry=footy-uy*half;   // lado de onde a branca vem
-    } else {
-      // reta nao alcanca essa distancia (raro); cai no pe da perpendicular
-      Rx=footx; Ry=footy;
-    }
+    const Rx=footx, Ry=footy;   // R = pe da perpendicular (OR perpendicular a linha de tiro)
     s += `<clipPath id="oclip"><circle cx="${g.O.x}" cy="${g.O.y}" r="${BALL}"/></clipPath>`;
     s += `<g clip-path="url(#oclip)"><circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="${BALL}" fill="${COVCOL}" fill-opacity="0.45"/></g>`;
     s += `<circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="${BALL}" fill="none" stroke="${COVCOL}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
@@ -482,8 +564,12 @@ function dynamicLayer(){
     const d1x=Rx-ux*BALL, d1y=Ry-uy*BALL, d2x=Rx+ux*BALL, d2y=Ry+uy*BALL;
     s += `<line x1="${d1x.toFixed(1)}" y1="${d1y.toFixed(1)}" x2="${d2x.toFixed(1)}" y2="${d2y.toFixed(1)}" stroke="${COVCOL}" stroke-width="1" stroke-dasharray="3 3"/>`;
     s += `<circle cx="${Rx.toFixed(1)}" cy="${Ry.toFixed(1)}" r="2.4" fill="${COVCOL}"/>`;
-    // perpendicular (tracejada): une o centro da objeto ao centro da ciano (pe na linha 2)
-    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${Rx.toFixed(1)}" y2="${Ry.toFixed(1)}" stroke="${COVCOL}" stroke-width="1.4" stroke-dasharray="4 3"/>`;
+    // linha na direcao O->R, centrada em R: estende 2 DIAMETROS (4*BALL) para cada lado de R.
+    let orx=Rx-g.O.x, ory=Ry-g.O.y; const orn=Math.hypot(orx,ory)||1; orx/=orn; ory/=orn;
+    const ext = 4*BALL;                       // 2 diametros = 4 raios, para cada lado
+    const P1x = Rx - orx*ext, P1y = Ry - ory*ext;
+    const P2x = Rx + orx*ext, P2y = Ry + ory*ext;
+    s += `<line x1="${P1x.toFixed(1)}" y1="${P1y.toFixed(1)}" x2="${P2x.toFixed(1)}" y2="${P2y.toFixed(1)}" stroke="${COVCOL}" stroke-width="1.4" stroke-dasharray="4 3"/>`;
     // direcao objeto->fantasma (usada adiante para posicionar o texto)
     let dx=g.F.x-g.O.x, dy=g.F.y-g.O.y; const dn=Math.hypot(dx,dy)||1; dx/=dn; dy/=dn;
 
@@ -522,7 +608,7 @@ function dynamicLayer(){
   // fracao ao longo da tabela atingida
   let frac;
   if(g.A.rail==='T'||g.A.rail==='B') frac=(g.A.x-L)/W; else frac=(g.A.y-T)/H;
-  document.getElementById('afrac').innerHTML = frac.toFixed(2)+' <span style="color:var(--muted);font-weight:400">('+railName+')</span>';
+  document.getElementById('afrac').innerHTML = frac.toFixed(2);
   document.getElementById('cut').textContent = g.cut.toFixed(1)+'°';
 
   // ---- memoria de calculo de A (em fracao de mesa) ----
@@ -636,6 +722,8 @@ function arc2(center, A, Bp, r, color, label){
 function defs(){
   return `<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
     <path d="M2 1L8 5L2 9" fill="none" stroke="var(--line2)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arr1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="var(--line1)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <marker id="axis" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
     <path d="M2 1L8 5L2 9" fill="none" stroke="#f0e9d8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <style>
