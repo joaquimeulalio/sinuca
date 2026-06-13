@@ -43,11 +43,20 @@ O ponto A é calculado por interseção da reta de tacada (branca → centro da 
 
 As entradas que determinam A são: a posição da objeto (que fixa θ₁ junto com a caçapa), a posição da branca, e as dimensões da mesa.
 
+## A meia bola
+
+Na **meia bola**, o centro da branca aponta para a **borda** da bola alvo. Nessa jogada, a alvo sai a **30°** da linha do tiro e a branca a **60°**, para o lado oposto — somando 90°, como em toda colisão elástica entre bolas de mesma massa.
+
+<p align="center">
+  <img src="meia-bola.svg" alt="Meia bola: centro da branca na borda da alvo, alvo a 30 graus e branca a 60 graus em relação à linha do tiro" width="460">
+</p>
+
 ## Estrutura
 
 ```
 sinuca.html   — o app inteiro (HTML + CSS + JS, sem dependências)
 diagram.svg   — diagrama estático do método (usado no README)
+meia-bola.svg — diagrama da meia bola (usado no README)
 README.md     — este arquivo
 ```
 
