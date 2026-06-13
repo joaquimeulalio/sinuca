@@ -63,3 +63,7 @@ README.md     — este arquivo
 ## Licença
 
 Uso livre.
+
+---
+
+Feito com Claude Code. Lorenzo ajudou.
