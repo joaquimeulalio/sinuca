@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sinuca — calculadora do ponto A</title>
+<style>
+  :root{
+    --felt:#0f6e56; --felt-dark:#0a513f; --rail:#5a3a22; --rail-light:#714a2c;
+    --line1:#ffd24a; --line2:#ffffff; --obj:#e24b4a; --objb:#a32d2d;
+    --ghost:#ffffff; --A:#ffffff; --ink:#23241f; --muted:#73726c;
+    --panel:#f4f1ea; --panel-line:#dcd8cc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#eceae3;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:18px;}
+  h1{font-size:20px;font-weight:600;margin:0 0 2px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .wrap{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start;max-width:980px;margin:0 auto}
+  .stage{flex:1 1 420px;min-width:320px}
+  svg{width:100%;height:auto;display:block;touch-action:none;cursor:default}
+  .ball{cursor:grab}
+  .ball:active{cursor:grabbing}
+  .panel{flex:0 0 260px;background:var(--panel);border:1px solid var(--panel-line);
+    border-radius:12px;padding:16px}
+  .panel h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;
+    color:var(--muted);margin:0 0 10px}
+  .row{display:flex;justify-content:space-between;align-items:baseline;
+    padding:6px 0;border-bottom:1px solid var(--panel-line);font-size:14px}
+  .row:last-child{border-bottom:0}
+  .row .v{font-variant-numeric:tabular-nums;font-weight:600}
+  .pockets{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:4px 0 14px}
+  .pk{border:1px solid var(--panel-line);background:#fff;border-radius:7px;
+    padding:8px 4px;font-size:12px;cursor:pointer;text-align:center;color:var(--ink);
+    transition:all .12s}
+  .pk:hover{border-color:var(--felt)}
+  .pk.on{background:var(--felt);color:#fff;border-color:var(--felt)}
+  .toggles{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+  label.tg{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+  .hint{font-size:12px;color:var(--muted);line-height:1.5;margin-top:14px}
+  .reset{margin-top:12px;width:100%;padding:9px;border:1px solid var(--felt);
+    background:#fff;color:var(--felt);border-radius:8px;font-size:13px;
+    font-weight:600;cursor:pointer}
+  .reset:hover{background:var(--felt);color:#fff}
+</style>
+</head>
+<body>
+  <h1>Calculadora do ponto A</h1>
+  <p class="sub">Arraste a bola objeto e a branca. Escolha a caçapa alvo. O ponto A é onde mirar na tabela.</p>
+  <div class="wrap">
+    <div class="stage">
+      <svg id="table" viewBox="0 0 600 760" role="img" aria-label="Mesa de sinuca interativa"></svg>
+    </div>
+    <div class="panel">
+      <h2>Caçapa alvo</h2>
+      <div class="pockets" id="pockets"></div>
+      <h2>Leitura</h2>
+      <div class="row"><span>θ₁ (linha 1 × horizontal)</span><span class="v" id="t1">–</span></div>
+      <div class="row"><span>θ₂ (linha 2 × horizontal)</span><span class="v" id="t2">–</span></div>
+      <div class="row"><span>Ponto A (fração da tabela)</span><span class="v" id="afrac">–</span></div>
+      <div class="row"><span>Ângulo de corte</span><span class="v" id="cut">–</span></div>
+      <div class="toggles">
+        <label class="tg"><input type="checkbox" id="showGhost" checked> mostrar bola fantasma</label>
+        <label class="tg"><input type="checkbox" id="showAngles" checked> mostrar ângulos</label>
+        <label class="tg"><input type="checkbox" id="showGrid" checked> mostrar grade de frações</label>
+      </div>
+      <button class="reset" id="reset">Voltar ao padrão</button>
+      <p class="hint">A reta de tacada (linha 2) passa pelo centro da bola fantasma — a posição da branca no instante do impacto, uma bola além da objeto na direção oposta à caçapa. O ponto A é onde essa reta encontra a tabela.</p>
+    </div>
+  </div>
+
+<script>
+const SVG = document.getElementById('table');
+const NS = 'http://www.w3.org/2000/svg';
+
+// ---- geometria da mesa (coordenadas internas do feltro) ----
+// feltro interno: x [L..R], y [T..B]
+const L=70, R=530, T=70, B=690;          // bordas internas (tabelas)
+const W = R-L, H = B-T;
+const BALL = 17;                          // raio das bolas
+const POCKET = 15;                        // raio das caçapas
+
+// caçapas: 4 cantos + 2 meio (lados esquerdo/direito no comprimento)
+const pockets = {
+  SE: {x:L, y:T, label:'Sup-Esq'},
+  SD: {x:R, y:T, label:'Sup-Dir'},
+  ME: {x:L, y:(T+B)/2, label:'Meio-Esq'},
+  MD: {x:R, y:(T+B)/2, label:'Meio-Dir'},
+  IE: {x:L, y:B, label:'Inf-Esq'},
+  ID: {x:R, y:B, label:'Inf-Dir'},
+};
+const pocketOrder = ['SE','SD','ME','MD','IE','ID'];
+
+// estado: posicoes default equivalentes ao diagrama (objeto acima-esq, branca abaixo, alvo Sup-Dir)
+const DEF = {
+  obj:{x: L + 0.43*W, y: T + 0.46*H},
+  cue:{x: L + 0.30*W, y: T + 0.86*H},
+  target:'SD'
+};
+let state = JSON.parse(JSON.stringify(DEF));
+
+// ---- construir SVG ----
+function buildStatic(){
+  let s = '';
+  // moldura (madeira)
+  s += `<rect x="30" y="30" width="540" height="700" rx="22" fill="var(--rail)"/>`;
+  s += `<rect x="44" y="44" width="512" height="672" rx="14" fill="var(--rail-light)"/>`;
+  // feltro
+  s += `<rect x="${L}" y="${T}" width="${W}" height="${H}" rx="6" fill="var(--felt)"/>`;
+  s += `<rect x="${L}" y="${T}" width="${W}" height="${H}" rx="6" fill="none" stroke="var(--felt-dark)" stroke-width="2"/>`;
+  // labels das tabelas
+  s += `<text class="tbl" x="${(L+R)/2}" y="${T-22}" text-anchor="middle">Tabela 1 (superior)</text>`;
+  s += `<text class="tbl" x="${(L+R)/2}" y="${B+34}" text-anchor="middle">Tabela 3 (inferior)</text>`;
+  s += `<text class="tbl" x="${L-30}" y="${(T+B)/2}" text-anchor="middle" transform="rotate(-90 ${L-30} ${(T+B)/2})">Tabela 4 (esquerda)</text>`;
+  s += `<text class="tbl" x="${R+30}" y="${(T+B)/2}" text-anchor="middle" transform="rotate(90 ${R+30} ${(T+B)/2})">Tabela 2 (direita)</text>`;
+  return s;
+}
+
+function gridLayer(){
+  if(!document.getElementById('showGrid').checked) return '';
+  let s='';
+  // verticais a 1/4 1/2 3/4 da largura
+  [[0.25,'#cfe0d8'],[0.5,'#bcd6cb'],[0.75,'#cfe0d8']].forEach(([f,c])=>{
+    const x=L+f*W;
+    s+=`<line x1="${x}" y1="${T}" x2="${x}" y2="${B}" stroke="${c}" stroke-width="1" stroke-dasharray="2 6"/>`;
+  });
+  s+=`<text class="frac" x="${L+0.5*W}" y="${B-6}" text-anchor="middle">1/2</text>`;
+  s+=`<text class="frac" x="${L+0.25*W}" y="${B-6}" text-anchor="middle">1/4</text>`;
+  s+=`<text class="frac" x="${L+0.75*W}" y="${B-6}" text-anchor="middle">3/4</text>`;
+  return s;
+}
+
+function pocketsLayer(){
+  let s='';
+  for(const k of pocketOrder){
+    const p=pockets[k];
+    const on = (k===state.target);
+    s+=`<circle cx="${p.x}" cy="${p.y}" r="${POCKET}" fill="#10130f"/>`;
+    if(on){
+      s+=`<circle cx="${p.x}" cy="${p.y}" r="${POCKET+4}" fill="none" stroke="var(--A)" stroke-width="2.5"/>`;
+      s+=`<text class="ctag" x="${p.x}" y="${p.y+1}" text-anchor="middle" dominant-baseline="middle" fill="#fff">C</text>`;
+    }
+  }
+  return s;
+}
+
+// ---- nucleo: calcular fantasma, linha1, linha2, ponto A ----
+function compute(){
+  const C = pockets[state.target];
+  const O = state.obj;
+  const Q = state.cue;
+  // direcao da cacapa->objeto (unit)
+  let dx=O.x-C.x, dy=O.y-C.y;
+  const n=Math.hypot(dx,dy)||1; dx/=n; dy/=n;
+  // fantasma (centro da branca no instante do impacto): uma bola alem do centro
+  // da objeto, na direcao oposta a cacapa. A reta de mira passa por este centro.
+  const F = {x:O.x + dx*2*BALL, y:O.y + dy*2*BALL};
+  // ponto de contato P (onde as bolas se tocam): meia bola, so para referencia
+  const P = {x:O.x + dx*BALL, y:O.y + dy*BALL};
+
+  // linha 2: reta da branca passando pelo CENTRO da fantasma, ate a tabela atingida
+  const v = {x:F.x-Q.x, y:F.y-Q.y};
+  const A = intersectRail(Q, v, state.target);
+
+  // angulos contra a horizontal (graus, 0..180), medidos como inclinacao da reta
+  const t1 = angleH(C, O);     // linha 1: objeto->cacapa
+  const t2 = angleH(Q, F);     // linha 2: branca->fantasma
+  // fracao horizontal de A
+  let afrac = (A.x - L)/W;
+  // angulo de corte: 0 = tacada reta (branca, objeto e cacapa alinhados)
+  const cut = 180 - angleBetween({x:C.x-O.x,y:C.y-O.y}, {x:Q.x-O.x,y:Q.y-O.y});
+
+  return {C,O,Q,P,F,A,t1,t2,afrac,cut};
+}
+
+// intersecta a reta (origin + t*dir, t>0) com a primeira tabela que encontrar para frente
+function intersectRail(origin, dir, target){
+  const cands=[];
+  // tabela superior y=T, inferior y=B
+  if(Math.abs(dir.y)>1e-6){
+    let t=(T-origin.y)/dir.y; if(t>1e-6){const x=origin.x+dir.x*t; if(x>=L-0.5&&x<=R+0.5) cands.push({t,x,y:T,rail:'T'});}
+    t=(B-origin.y)/dir.y; if(t>1e-6){const x=origin.x+dir.x*t; if(x>=L-0.5&&x<=R+0.5) cands.push({t,x,y:B,rail:'B'});}
+  }
+  // lados x=L, x=R
+  if(Math.abs(dir.x)>1e-6){
+    let t=(L-origin.x)/dir.x; if(t>1e-6){const y=origin.y+dir.y*t; if(y>=T-0.5&&y<=B+0.5) cands.push({t,x:L,y,rail:'L'});}
+    t=(R-origin.x)/dir.x; if(t>1e-6){const y=origin.y+dir.y*t; if(y>=T-0.5&&y<=B+0.5) cands.push({t,x:R,y,rail:'R'});}
+  }
+  if(!cands.length) return {x:origin.x,y:origin.y,rail:'?'};
+  // menor t positivo = primeira tabela atingida
+  cands.sort((a,b)=>a.t-b.t);
+  const hit=cands[0];
+  // a tabela onde esta a cacapa alvo
+  const targetRail = (target==='SE'||target==='SD')?'T':(target==='IE'||target==='ID')?'B':(target==='ME')?'L':'R';
+  hit.onTargetRail = (hit.rail===targetRail);
+  return hit;
+}
+
+function angleH(a,b){ // angulo da reta a->b com a horizontal, 0..180
+  let ang=Math.atan2(-(b.y-a.y), (b.x-a.x))*180/Math.PI;
+  if(ang<0) ang+=180;
+  return ang;
+}
+function angleBetween(u,w){
+  const d=(u.x*w.x+u.y*w.y)/((Math.hypot(u.x,u.y)||1)*(Math.hypot(w.x,w.y)||1));
+  return Math.acos(Math.max(-1,Math.min(1,d)))*180/Math.PI;
+}
+
+// ---- camada dinamica (linhas, bolas, A, angulos) ----
+function dynamicLayer(){
+  const g = compute();
+  const showGhost = document.getElementById('showGhost').checked;
+  const showAng = document.getElementById('showAngles').checked;
+  let s='';
+
+  // linha 2: branca -> A (azul tracejada com seta), da borda da branca ate A
+  s += dashLineToPoint(g.Q, g.A, BALL, 'var(--line2)', true);
+  s += `<text class="lbl" fill="var(--line2)" x="${(g.Q.x+g.A.x)/2-44}" y="${(g.Q.y+g.A.y)/2}">linha 2</text>`;
+
+  // linha 1: cacapa -> objeto (verde tracejada), desenhada por cima da linha 2
+  s += dashLine(g.C, g.O, POCKET, BALL, 'var(--line1)');
+  s += `<text class="lbl" fill="var(--line1)" x="${(g.C.x+g.O.x)/2+16}" y="${(g.C.y+g.O.y)/2}">linha 1</text>`;
+
+  // angulos
+  if(showAng){
+    // horizontais tracejadas
+    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x+70}" y2="${g.O.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
+    s += `<line x1="${g.Q.x}" y1="${g.Q.y}" x2="${g.Q.x+70}" y2="${g.Q.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
+    s += arc(g.O, g.C, 44, 'var(--line1)', 'θ₁ = '+g.t1.toFixed(0)+'°');
+    s += arc(g.Q, g.F, 50, 'var(--line2)', 'θ₂ = '+g.t2.toFixed(0)+'°');
+  }
+
+  // bola fantasma
+  if(showGhost){
+    s += `<circle cx="${g.F.x}" cy="${g.F.y}" r="${BALL}" fill="none" stroke="var(--ghost)" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+    s += `<circle cx="${g.F.x}" cy="${g.F.y}" r="2.4" fill="var(--ghost)"/>`;
+    s += `<text class="lbl" fill="var(--ghost)" x="${g.F.x}" y="${g.F.y+BALL+14}" text-anchor="middle">fantasma</text>`;
+  }
+
+  // ponto A
+  s += `<circle cx="${g.A.x}" cy="${g.A.y}" r="6" fill="var(--A)"/>`;
+  const ay = (g.A.rail==='T')? g.A.y-12 : g.A.y+20;
+  s += `<text class="Atag" x="${g.A.x+(g.A.rail==='R'?-14:12)}" y="${ay}" text-anchor="middle" fill="var(--A)">A</text>`;
+
+  // bolas arrastaveis (objeto e branca)
+  s += `<circle class="ball" data-b="obj" cx="${g.O.x}" cy="${g.O.y}" r="${BALL}" fill="var(--obj)" stroke="var(--objb)" stroke-width="1.5"/>`;
+  s += `<text class="bl" x="${g.O.x}" y="${g.O.y+1}" text-anchor="middle" dominant-baseline="middle" fill="#fff">obj</text>`;
+  s += `<circle class="ball" data-b="cue" cx="${g.Q.x}" cy="${g.Q.y}" r="${BALL}" fill="#f7f5ef" stroke="#9a988f" stroke-width="1.5"/>`;
+  s += `<text class="bl" x="${g.Q.x}" y="${g.Q.y+1}" text-anchor="middle" dominant-baseline="middle" fill="#555">B</text>`;
+
+  // atualizar painel
+  const railName = {T:'Tabela 1',B:'Tabela 3',L:'Tabela 4',R:'Tabela 2'}[g.A.rail]||'–';
+  document.getElementById('t1').textContent = g.t1.toFixed(1)+'°';
+  document.getElementById('t2').textContent = g.t2.toFixed(1)+'°';
+  // fracao ao longo da tabela atingida
+  let frac;
+  if(g.A.rail==='T'||g.A.rail==='B') frac=(g.A.x-L)/W; else frac=(g.A.y-T)/H;
+  document.getElementById('afrac').innerHTML = frac.toFixed(2)+' <span style="color:var(--muted);font-weight:400">('+railName+')</span>';
+  document.getElementById('cut').textContent = g.cut.toFixed(1)+'°';
+  return s;
+}
+
+function dashLine(a,b,ra,rb,color){
+  // de borda de a (raio ra) ate borda de b (raio rb)
+  let dx=b.x-a.x, dy=b.y-a.y; const n=Math.hypot(dx,dy)||1; dx/=n; dy/=n;
+  const x1=a.x+dx*ra, y1=a.y+dy*ra, x2=b.x-dx*rb, y2=b.y-dy*rb;
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2.6" stroke-dasharray="10 6"/>`;
+}
+function dashLineToPoint(a,P,ra,color,arrow){
+  let dx=P.x-a.x, dy=P.y-a.y; const n=Math.hypot(dx,dy)||1; dx/=n; dy/=n;
+  const x1=a.x+dx*ra, y1=a.y+dy*ra;
+  const head = arrow? ` marker-end="url(#arr)"`:'';
+  return `<line x1="${x1}" y1="${y1}" x2="${P.x}" y2="${P.y}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5"${head}/>`;
+}
+function arc(center, toward, r, color, label){
+  // arco do eixo horizontal positivo (direita) ate a direcao center->toward
+  // angulos em coords de tela (y para baixo). Ponto inicial: horizontal direita.
+  const x0 = center.x + r, y0 = center.y;
+  // direcao alvo normalizada
+  let ddx = toward.x-center.x, ddy = toward.y-center.y;
+  const nn = Math.hypot(ddx,ddy)||1; ddx/=nn; ddy/=nn;
+  const exx = center.x + ddx*r, eyy = center.y + ddy*r;
+  // sweep-flag: em coords de tela, varrer "para cima" (toward acima) = sweep 0
+  const sweep = (toward.y < center.y) ? 0 : 1;
+  let s = `<path d="M ${x0} ${y0} A ${r} ${r} 0 0 ${sweep} ${exx.toFixed(1)} ${eyy.toFixed(1)}" fill="none" stroke="${color}" stroke-width="1.6"/>`;
+  // label na bissetriz, um pouco fora do arco
+  let mdx = (1+ddx)/2, mdy = (0+ddy)/2;
+  const mn = Math.hypot(mdx,mdy)||1; mdx/=mn; mdy/=mn;
+  s += `<text class="lbl" fill="${color}" x="${(center.x+mdx*(r+14)).toFixed(1)}" y="${(center.y+mdy*(r+14)+4).toFixed(1)}" text-anchor="middle">${label}</text>`;
+  return s;
+}
+
+function defs(){
+  return `<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="var(--line2)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <style>
+      .tbl{fill:#f0e9d8;font-size:14px;font-family:inherit;font-weight:600}
+      .frac{fill:#cfe8de;font-size:11px;font-family:inherit}
+      .lbl{font-size:13px;font-family:inherit}
+      .bl{font-size:12px;font-family:inherit;font-weight:600}
+      .Atag{font-size:16px;font-weight:700;font-family:inherit}
+      .ctag{font-size:13px;font-weight:700;font-family:inherit}
+    </style></defs>`;
+}
+
+function render(){
+  SVG.innerHTML = defs() + buildStatic() + gridLayer() + pocketsLayer() + dynamicLayer();
+  attachDrag();
+}
+
+// ---- caçapa selector ----
+function buildPocketButtons(){
+  const box=document.getElementById('pockets');
+  box.innerHTML='';
+  for(const k of pocketOrder){
+    const b=document.createElement('div');
+    b.className='pk'+(k===state.target?' on':'');
+    b.textContent=pockets[k].label;
+    b.onclick=()=>{state.target=k; render(); buildPocketButtons();};
+    box.appendChild(b);
+  }
+}
+
+// ---- drag ----
+function svgPoint(evt){
+  const pt=SVG.createSVGPoint();
+  const t=evt.touches?evt.touches[0]:evt;
+  pt.x=t.clientX; pt.y=t.clientY;
+  const ctm=SVG.getScreenCTM().inverse();
+  const p=pt.matrixTransform(ctm);
+  return {x:p.x,y:p.y};
+}
+let dragging=null;
+function attachDrag(){
+  SVG.querySelectorAll('.ball').forEach(el=>{
+    el.addEventListener('mousedown',startDrag);
+    el.addEventListener('touchstart',startDrag,{passive:false});
+  });
+}
+function startDrag(e){
+  e.preventDefault();
+  dragging=e.currentTarget.getAttribute('data-b');
+}
+function moveDrag(e){
+  if(!dragging) return;
+  e.preventDefault();
+  const p=svgPoint(e);
+  // limitar ao feltro
+  const x=Math.max(L+BALL,Math.min(R-BALL,p.x));
+  const y=Math.max(T+BALL,Math.min(B-BALL,p.y));
+  state[dragging]={x,y};
+  render();
+}
+function endDrag(){dragging=null;}
+window.addEventListener('mousemove',moveDrag);
+window.addEventListener('touchmove',moveDrag,{passive:false});
+window.addEventListener('mouseup',endDrag);
+window.addEventListener('touchend',endDrag);
+
+// ---- controles ----
+['showGhost','showAngles','showGrid'].forEach(id=>
+  document.getElementById(id).addEventListener('change',render));
+document.getElementById('reset').onclick=()=>{
+  state=JSON.parse(JSON.stringify(DEF)); render(); buildPocketButtons();
+};
+
+buildPocketButtons();
+render();
+</script>
+</body>
+</html>
