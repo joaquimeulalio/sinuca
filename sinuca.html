@@ -32,7 +32,7 @@
     padding:6px 0;border-bottom:1px solid var(--panel-line);font-size:14px}
   .row:last-child{border-bottom:0}
   .row .v{font-variant-numeric:tabular-nums;font-weight:600}
-  .pockets{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:4px 0 14px}
+  .pockets{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin:4px 0 14px}
   .pk{border:1px solid var(--panel-line);background:#fff;border-radius:7px;
     padding:8px 4px;font-size:12px;cursor:pointer;text-align:center;color:var(--ink);
     transition:all .12s}
@@ -45,6 +45,10 @@
     background:#fff;color:var(--felt);border-radius:8px;font-size:13px;
     font-weight:600;cursor:pointer}
   .reset:hover{background:var(--felt);color:#fff}
+  .realbtns{display:flex;gap:8px;margin-top:10px}
+  .rbtn{flex:1;padding:7px 6px;border:1px solid var(--felt);background:#fff;
+    color:var(--felt);border-radius:7px;font-size:12px;font-weight:600;cursor:pointer}
+  .rbtn:hover{background:var(--felt);color:#fff}
   .calc{font-size:13px;line-height:1.6;color:var(--ink)}
   .calc .step{padding:5px 0;border-bottom:1px solid var(--panel-line)}
   .calc .step:last-child{border-bottom:0}
@@ -76,7 +80,13 @@
         <label class="tg"><input type="checkbox" id="showAngles" checked> mostrar ângulos</label>
         <label class="tg"><input type="checkbox" id="showGrid" checked> mostrar grade de frações</label>
         <label class="tg"><input type="checkbox" id="showCover" checked> mostrar recobrimento</label>
+        <label class="tg"><input type="checkbox" id="realShot"> tacada real (arrastar ponto A)</label>
+        <label class="tg"><input type="checkbox" id="show180"> método 180 − α (aproximado)</label>
         <label class="tg"><input type="checkbox" id="showTri"> mostrar triângulos</label>
+      </div>
+      <div class="realbtns" id="realbtns" style="display:none">
+        <button class="rbtn" id="btnHalf">meia bola</button>
+        <button class="rbtn" id="btnIdeal">mira ideal</button>
       </div>
     </div>
     <div class="panel calcpanel">
@@ -115,6 +125,7 @@ const DEF = {
   target:'SD'
 };
 let state = JSON.parse(JSON.stringify(DEF));
+let realA = null;   // ponto A arrastavel no modo "tacada real" (null = ainda nao definido)
 
 // ---- construir SVG ----
 function buildStatic(){
@@ -179,6 +190,8 @@ function pocketsLayer(){
   return s;
 }
 
+function realMode(){ const e=document.getElementById('realShot'); return e && e.checked; }
+
 // ---- nucleo: calcular fantasma, linha1, linha2, ponto A ----
 function compute(){
   const C = pockets[state.target];
@@ -207,7 +220,34 @@ function compute(){
   const angL = angleBetween({x:C.x-O.x,y:C.y-O.y}, {x:F.x-Q.x,y:F.y-Q.y});
   const cut = Math.min(angL, 180-angL);
 
-  return {C,O,Q,P,F,A,t1,t2,afrac,cut};
+  // ---- modo "tacada real": A e arrastado; recalcula a trajetoria REAL da objeto ----
+  // A branca viaja na linha 2 (Q -> realA). Ela toca a objeto quando o centro da branca
+  // fica a 2*BALL (um diametro) do centro da objeto: esse e o "impacto real" (Fr).
+  // A objeto sai na direcao (centro objeto - ponto de impacto) = reta que une os centros.
+  let real = null;
+  if(realMode()){
+    const Atgt = realA || A;                 // se ainda nao arrastado, parte do A ideal
+    let ux=Atgt.x-Q.x, uy=Atgt.y-Q.y; const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un;
+    // resolver |Q + t*u - O| = 2*BALL  (primeiro contato, menor t>0)
+    const ox=Q.x-O.x, oy=Q.y-O.y;
+    const bq=ux*ox+uy*oy, cq=ox*ox+oy*oy-(2*BALL)*(2*BALL);
+    const disc=bq*bq-cq;
+    let Fr=null, dirObj=null, hitsObj=false, objEnd=null;
+    if(disc>=0){
+      const t=-bq-Math.sqrt(disc);           // menor raiz = primeiro contato
+      if(t>0){
+        hitsObj=true;
+        Fr={x:Q.x+ux*t, y:Q.y+uy*t};         // centro da branca no impacto real
+        // direcao de saida da objeto: do ponto de impacto para o centro da objeto
+        let gx=O.x-Fr.x, gy=O.y-Fr.y; const gn=Math.hypot(gx,gy)||1; gx/=gn; gy/=gn;
+        dirObj={x:gx,y:gy};
+        objEnd=intersectRail(O,{x:gx,y:gy},state.target); // ate a tabela (trajetoria real)
+      }
+    }
+    real={Atgt,Fr,dirObj,hitsObj,objEnd,u:{x:ux,y:uy}};
+  }
+
+  return {C,O,Q,P,F,A,t1,t2,afrac,cut,real};
 }
 
 // intersecta a reta (origin + t*dir, t>0) com a primeira tabela que encontrar para frente
@@ -250,6 +290,7 @@ function dynamicLayer(){
   const showAng = document.getElementById('showAngles').checked;
   const showTri = document.getElementById('showTri').checked;
   const showCover = document.getElementById('showCover').checked;
+  const show180 = document.getElementById('show180').checked;
   let s='';
 
   // triangulos semelhantes (por baixo de tudo): pequeno B->F, grande B->A
@@ -267,16 +308,19 @@ function dynamicLayer(){
     s += `<text class="trilbl" fill="#ffd24a" x="${(Bx+Ax)/2}" y="${Ay-6}" text-anchor="middle">A − Bx</text>`;
   }
 
-  // linha 2: branca -> A (azul tracejada com seta), da borda da branca ate A
-  s += dashLineToPoint(g.Q, g.A, BALL, 'var(--line2)', true);
+  const isReal = realMode() && g.real;
+
+  // linha 2: no modo normal vai ate o A ideal; no modo real, ate o A arrastado
+  const A2 = isReal ? g.real.Atgt : g.A;
+  s += dashLineToPoint(g.Q, A2, BALL, 'var(--line2)', true);
   // label "linha 2": preferir a mesma altura do "linha 1", sobre a linha 2.
   // se isso jogar o label para fora do feltro, reposicionar entre o ponto A e a objeto.
   {
     const yL1 = (g.C.y+g.O.y)/2;
-    const uy2 = (g.A.y-g.Q.y);
+    const uy2 = (A2.y-g.Q.y);
     let lx, ly;
     if(Math.abs(uy2)>1e-6){
-      const xOnLine = g.Q.x + (g.A.x-g.Q.x)*((yL1-g.Q.y)/uy2);
+      const xOnLine = g.Q.x + (A2.x-g.Q.x)*((yL1-g.Q.y)/uy2);
       lx = xOnLine - 40; ly = yL1;   // -40 = recuo do texto para a esquerda da linha
     } else { lx = -999; ly = yL1; }
     // limites uteis do feltro (com margem p/ caber a palavra "linha 2", ~52px de largura)
@@ -284,22 +328,75 @@ function dynamicLayer(){
     const okY = (ly >= T+6) && (ly <= B-6);
     if(!okX || !okY){
       // fallback: ponto medio entre A e objeto, sobre a linha 2
-      const mxp=(g.A.x+g.O.x)/2, myp=(g.A.y+g.O.y)/2;
+      const mxp=(A2.x+g.O.x)/2, myp=(A2.y+g.O.y)/2;
       lx = mxp - 40; ly = myp;
     }
     s += `<text class="lbl" fill="var(--line2)" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}">linha 2</text>`;
   }
 
-  // linha 1: cacapa -> objeto (verde tracejada), desenhada por cima da linha 2
-  s += dashLine(g.C, g.O, POCKET, BALL, 'var(--line1)');
-  s += `<text class="lbl" fill="var(--line1)" x="${(g.C.x+g.O.x)/2+16}" y="${(g.C.y+g.O.y)/2}">linha 1</text>`;
+  if(isReal){
+    // linha 1 IDEAL como referencia: pontilhada clara, objeto -> cacapa
+    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.C.x}" y2="${g.C.y}" stroke="#ffe9a8" stroke-width="1.4" stroke-dasharray="2 5" opacity="0.7"/>`;
+    s += `<text class="lbl" fill="#ffe9a8" x="${(g.C.x+g.O.x)/2+16}" y="${(g.C.y+g.O.y)/2}" opacity="0.85">ideal</text>`;
+    // linha 1 REAL: trajetoria de fato da objeto (amarelo forte), so se a branca acerta a objeto
+    if(g.real.hitsObj && g.real.objEnd){
+      s += dashLine(g.O, g.real.objEnd, BALL, 0, 'var(--line1)');
+      s += `<text class="lbl" fill="var(--line1)" x="${(g.O.x+g.real.objEnd.x)/2+14}" y="${((g.O.y+g.real.objEnd.y)/2-22).toFixed(1)}">linha 1 (real)</text>`;
+    }
+  } else {
+    // linha 1: cacapa -> objeto (verde/amarela tracejada)
+    s += dashLine(g.C, g.O, POCKET, BALL, 'var(--line1)');
+    s += `<text class="lbl" fill="var(--line1)" x="${(g.C.x+g.O.x)/2+16}" y="${(g.C.y+g.O.y)/2}">linha 1</text>`;
+  }
+
+  // metodo "180 - alfa": angulo VISIVEL entre (obj->branca) e (obj->cacapa), medido na objeto.
+  // corte ≈ 180 - alfa. Tudo usa pontos reais (branca, objeto, cacapa).
+  if(show180){
+    const M180 = '#c98bdc';   // roxo claro, cor propria
+    // linha objeto->branca (a outra ja existe como linha 1 obj->cacapa)
+    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.Q.x}" y2="${g.Q.y}" stroke="${M180}" stroke-width="1.6" stroke-dasharray="2 4"/>`;
+    // arco alfa na objeto entre obj->branca e obj->cacapa
+    const alpha = angleBetween({x:g.Q.x-g.O.x,y:g.Q.y-g.O.y},{x:g.C.x-g.O.x,y:g.C.y-g.O.y});
+    s += arc2(g.O, g.Q, g.C, 34, M180, '');
+    // α₂: angulo na OBJETO entre a reta objeto->branca e a vertical
+    const dxQ=g.Q.x-g.O.x, dyQ=g.Q.y-g.O.y;
+    // vertical de referencia: para baixo ou para cima, o que estiver do mesmo lado da branca
+    const vy = (dyQ>=0) ? 1 : -1;
+    const vert = {x:g.O.x, y:g.O.y + vy*60};
+    const alpha2 = angleBetween({x:dxQ,y:dyQ},{x:0,y:vy});
+    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x}" y2="${(g.O.y+vy*60).toFixed(1)}" stroke="${M180}" stroke-width="1" stroke-dasharray="3 3"/>`;
+    s += arc2(g.O, g.Q, vert, 40, M180, 'α₂ = '+alpha2.toFixed(0)+'°');
+    const corteAp = 180-alpha;
+    // regra prática por α (meia bola exata = α 150° = corte 30°):
+    const d = alpha - 150;
+    let regra;
+    if(Math.abs(d) < 0.5)      regra = '= 1/2 bola (corte 30°)';
+    else if(d > 0)             regra = (d < 8 ? 'pouco menos' : 'menos') + ' corte que 1/2 bola';
+    else                       regra = (-d < 8 ? 'pouco mais' : 'mais') + ' corte que 1/2 bola';
+    // ---- painel no canto: lado VERTICAL oposto ao da caçapa, lado HORIZONTAL oposto ao da branca ----
+    // ex.: caçapa em cima -> painel embaixo; branca a esquerda -> painel a direita.
+    const BW=228, BH=98, m=16;
+    const midX=(L+R)/2, midY=(T+B)/2;
+    const right = g.Q.x < midX;        // branca a esquerda -> painel a direita
+    const bottom = g.C.y < midY;       // caçapa em cima   -> painel embaixo
+    const bx = right ? (R-m-BW) : (L+m);
+    const by = bottom ? (B-m-BH) : (T+m);
+    const tx=bx+12, ty=by+22;
+    s += `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${BW}" height="${BH}" rx="8" fill="#0a513f" fill-opacity="0.85" stroke="${M180}" stroke-width="1.2"/>`;
+    s += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" fill="${M180}" font-size="13" font-weight="700">α = ${alpha.toFixed(0)}°</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${(ty+16).toFixed(1)}" fill="${M180}" font-size="12">corte ≈ 180−α = ${corteAp.toFixed(0)}°</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${(ty+32).toFixed(1)}" fill="${M180}" font-size="12" font-weight="700">→ ${regra}</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${(ty+54).toFixed(1)}" fill="${M180}" font-size="11">regra: α=150°→1/2 bola (corte 30°)</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${(ty+68).toFixed(1)}" fill="${M180}" font-size="11">α&gt;150°→menos corte</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${(ty+82).toFixed(1)}" fill="${M180}" font-size="11">α&lt;150°→mais corte</text>`;
+  }
 
   // angulos
   if(showAng){
     // horizontais tracejadas
     s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x+70}" y2="${g.O.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
     s += `<line x1="${g.Q.x}" y1="${g.Q.y}" x2="${g.Q.x+70}" y2="${g.Q.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
-    s += arc(g.O, g.C, 44, 'var(--line1)', 'θ₁ = '+g.t1.toFixed(0)+'°');
+    s += arc(g.O, g.C, 44, 'var(--line1)', 'α₁ = '+g.t1.toFixed(0)+'°');
     s += arc(g.Q, g.F, 50, 'var(--line2)', 'θ₂ = '+g.t2.toFixed(0)+'°');
   }
 
@@ -310,18 +407,28 @@ function dynamicLayer(){
     s += `<text class="lbl" fill="var(--ghost)" x="${g.F.x}" y="${g.F.y+BALL+14}" text-anchor="middle">fantasma "F"</text>`;
   }
 
-  // ponto A
-  s += `<circle cx="${g.A.x}" cy="${g.A.y}" r="6" fill="var(--A)"/>`;
+  // ponto A: no modo real e arrastavel (e o alvo da mira), maior e com classe ball
+  const Apt = isReal ? g.real.Atgt : g.A;
+  if(isReal){
+    // ponto de impacto real (onde a branca toca a objeto) - bolinha de referencia
+    if(g.real.hitsObj && g.real.Fr){
+      s += `<circle cx="${g.real.Fr.x.toFixed(1)}" cy="${g.real.Fr.y.toFixed(1)}" r="${BALL}" fill="none" stroke="var(--line2)" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.6"/>`;
+    }
+    s += `<circle class="ball" data-b="A" cx="${Apt.x.toFixed(1)}" cy="${Apt.y.toFixed(1)}" r="8" fill="var(--A)" stroke="#0f6e56" stroke-width="2"/>`;
+  } else {
+    s += `<circle cx="${g.A.x}" cy="${g.A.y}" r="6" fill="var(--A)"/>`;
+  }
   // fracao ao longo da tabela atingida (mesma usada no painel)
   let Afrac;
-  if(g.A.rail==='T'||g.A.rail==='B') Afrac=(g.A.x-L)/W; else Afrac=(g.A.y-T)/H;
+  const Arail = isReal ? g.real.Atgt.rail : g.A.rail;
+  if(Arail==='T'||Arail==='B') Afrac=(Apt.x-L)/W; else Afrac=(Apt.y-T)/H;
   const Apct = Math.round(Afrac*100)+'%';
   // posicao do label: na tabela superior, na faixa de madeira acima do ponto
   // (abaixo do texto "Tabela 1" em y=T-22, acima da bolinha em y=T)
-  let alx=g.A.x, aly;
-  if(g.A.rail==='T') aly=T-9;
-  else if(g.A.rail==='B') aly=B+16;
-  else { alx=g.A.x+(g.A.rail==='R'?-26:26); aly=g.A.y+5; }
+  let alx=Apt.x, aly;
+  if(Arail==='T') aly=T-9;
+  else if(Arail==='B') aly=B+16;
+  else { alx=Apt.x+(Arail==='R'?-26:26); aly=Apt.y+5; }
   s += `<text class="Atag" x="${alx}" y="${aly}" text-anchor="middle" fill="var(--A)">A ${Apct}</text>`;
 
   // bolas arrastaveis (objeto e branca)
@@ -330,20 +437,34 @@ function dynamicLayer(){
   // OPCAO 1 (versao B): bola de recobrimento encostada na objeto, no lado de onde a
   // branca ataca (direcao objeto->fantasma, oposta a caçapa). overlap = 1 - sin(corte).
   if(showCover){
-    const cov = Math.max(0, Math.min(1, 1 - Math.sin(g.cut*Math.PI/180)));
+    // no modo real, o recobrimento reflete a tacada de fato: corte entre a linha 2 real
+    // (branca -> A arrastado) e a saida real da objeto; e a reta usada e a linha 2 real.
+    let covCut, lineFrom, lineDir;
+    if(isReal && g.real.hitsObj){
+      const a1=angleBetween({x:g.real.dirObj.x,y:g.real.dirObj.y}, {x:-g.real.u.x,y:-g.real.u.y});
+      covCut=Math.min(a1,180-a1);
+      lineFrom=g.Q; lineDir={x:g.real.u.x,y:g.real.u.y};
+    } else if(isReal && !g.real.hitsObj){
+      // branca nem toca a objeto: sem recobrimento
+      covCut=null;
+    } else {
+      covCut=g.cut; lineFrom=g.Q; lineDir={x:g.F.x-g.Q.x,y:g.F.y-g.Q.y};
+    }
+   if(covCut!==null){
+    const cov = Math.max(0, Math.min(1, 1 - Math.sin(covCut*Math.PI/180)));
     const COVCOL = '#37c0d8';
     // distancia centro-a-centro que produz a area de sobreposicao desejada.
     // (a area de interseccao entre dois circulos de mesmo raio depende so dessa distancia)
     const dist = 2*BALL*(1-cov);
-    // queremos o CENTRO da bola ciano sobre a LINHA 2 (reta real da branca: Q -> F),
+    // queremos o CENTRO da bola ciano sobre a LINHA 2 (reta real da branca),
     // a essa mesma distancia 'dist' do centro da objeto. Resolvemos a interseccao da
     // reta 2 com o circulo de raio 'dist' centrado na objeto, e escolhemos o ponto do
     // lado de onde a branca vem (mais proximo da branca Q).
-    let ux=g.F.x-g.Q.x, uy=g.F.y-g.Q.y; const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un; // dir da tacada
+    let ux=lineDir.x, uy=lineDir.y; const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un; // dir da tacada
     // ponto da reta mais proximo da objeto: projecao de O sobre a reta
-    const wx=g.O.x-g.Q.x, wy=g.O.y-g.Q.y;
+    const wx=g.O.x-lineFrom.x, wy=g.O.y-lineFrom.y;
     const proj=wx*ux+wy*uy;            // parametro do pe da perpendicular
-    const footx=g.Q.x+ux*proj, footy=g.Q.y+uy*proj;
+    const footx=lineFrom.x+ux*proj, footy=lineFrom.y+uy*proj;
     const perpd=Math.hypot(g.O.x-footx, g.O.y-footy);  // dist da objeto a reta
     let Rx, Ry;
     if(perpd<=dist){
@@ -388,7 +509,8 @@ function dynamicLayer(){
     const ty = g.O.y + perp.y*off;
     // ancoragem horizontal conforme o texto fica a esquerda/direita da objeto
     const anchor = perp.x>0.2 ? 'start' : perp.x<-0.2 ? 'end' : 'middle';
-    s += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" fill="${COVCOL}" font-size="13" font-weight="700">${coverShort(cov)} · ${cov.toFixed(2)} · corte ${g.cut.toFixed(0)}°</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="${anchor}" fill="${COVCOL}" font-size="13" font-weight="700">${coverShort(cov)} · ${cov.toFixed(2)} · corte ${covCut.toFixed(0)}°</text>`;
+   }
   }
   s += `<circle class="ball" data-b="cue" cx="${g.Q.x}" cy="${g.Q.y}" r="${BALL}" fill="#f7f5ef" stroke="#9a988f" stroke-width="1.5"/>`;
   s += `<text class="bl" x="${g.Q.x}" y="${g.Q.y+1}" text-anchor="middle" dominant-baseline="middle" fill="#555">B</text>`;
@@ -570,6 +692,19 @@ function moveDrag(e){
   if(!dragging) return;
   e.preventDefault();
   const p=svgPoint(e);
+  if(dragging==='A'){
+    // o ponto A vive sobre a tabela onde esta a cacapa alvo; projeta o cursor nessa tabela
+    const tg=state.target;
+    const rail=(tg==='SE'||tg==='SD')?'T':(tg==='IE'||tg==='ID')?'B':(tg==='ME')?'L':'R';
+    let ax,ay;
+    if(rail==='T'){ ay=T; ax=Math.max(L,Math.min(R,p.x)); }
+    else if(rail==='B'){ ay=B; ax=Math.max(L,Math.min(R,p.x)); }
+    else if(rail==='L'){ ax=L; ay=Math.max(T,Math.min(B,p.y)); }
+    else { ax=R; ay=Math.max(T,Math.min(B,p.y)); }
+    realA={x:ax,y:ay,rail};
+    render();
+    return;
+  }
   // limitar ao feltro
   const x=Math.max(L+BALL,Math.min(R-BALL,p.x));
   const y=Math.max(T+BALL,Math.min(B-BALL,p.y));
@@ -583,8 +718,61 @@ window.addEventListener('mouseup',endDrag);
 window.addEventListener('touchend',endDrag);
 
 // ---- controles ----
-['showGhost','showAngles','showGrid','showTri','showCover'].forEach(id=>
+['showGhost','showAngles','showGrid','showTri','showCover','show180'].forEach(id=>
   document.getElementById(id).addEventListener('change',render));
+// modo tacada real: ao ligar, parte do A ideal atual; ao desligar, esquece o A arrastado
+document.getElementById('realShot').addEventListener('change',(e)=>{
+  if(e.target.checked){
+    const g=compute();           // A ideal atual
+    realA={x:g.A.x,y:g.A.y,rail:g.A.rail};
+  } else {
+    realA=null;
+  }
+  document.getElementById('realbtns').style.display = e.target.checked?'flex':'none';
+  render();
+});
+
+// "mira ideal": volta o A para a posicao que encaçapa (mira perfeita)
+document.getElementById('btnIdeal').addEventListener('click',()=>{
+  const g=compute();
+  realA={x:g.A.x,y:g.A.y,rail:g.A.rail};
+  render();
+});
+
+// "meia bola": ajusta a mira para que o corte real seja ~30° (recobrimento de meia bola),
+// escolhendo o lado (esq/dir da objeto) cuja trajetoria real da objeto aponta para a caçapa.
+document.getElementById('btnHalf').addEventListener('click',()=>{
+  const tg=state.target;
+  const rail=(tg==='SE'||tg==='SD')?'T':(tg==='IE'||tg==='ID')?'B':(tg==='ME')?'L':'R';
+  const g0=compute();
+  const C=g0.C, O=g0.O;
+  // direcao ideal de saida da objeto (rumo a cacapa), normalizada
+  let cdx=C.x-O.x, cdy=C.y-O.y; const cn=Math.hypot(cdx,cdy)||1; cdx/=cn; cdy/=cn;
+  let best=null, bestScore=-1e9;
+  const N=240;
+  for(let i=0;i<=N;i++){
+    let ax,ay;
+    if(rail==='T'){ ay=T; ax=L+(R-L)*i/N; }
+    else if(rail==='B'){ ay=B; ax=L+(R-L)*i/N; }
+    else if(rail==='L'){ ax=L; ay=T+(B-T)*i/N; }
+    else { ax=R; ay=T+(B-T)*i/N; }
+    realA={x:ax,y:ay,rail};
+    const g=compute();
+    if(g.real && g.real.hitsObj){
+      const a=angleBetween({x:g.real.dirObj.x,y:g.real.dirObj.y},{x:-g.real.u.x,y:-g.real.u.y});
+      const cutR=Math.min(a,180-a);
+      // so consideramos pontos perto de 30° (meia bola)
+      if(Math.abs(cutR-30)<3){
+        // entre eles, preferir o que manda a objeto mais na direcao da cacapa
+        const align = g.real.dirObj.x*cdx + g.real.dirObj.y*cdy; // produto escalar (quanto maior, melhor)
+        const score = align - Math.abs(cutR-30)*0.05;
+        if(score>bestScore){ bestScore=score; best={x:ax,y:ay,rail}; }
+      }
+    }
+  }
+  realA = best || realA;
+  render();
+});
 
 buildPocketButtons();
 render();
