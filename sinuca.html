@@ -317,9 +317,10 @@ function intersectRail(origin, dir, target){
   return hit;
 }
 
-function angleH(a,b){ // angulo da reta a->b com a horizontal, 0..180
+function angleH(a,b){ // MENOR angulo da reta a->b com a horizontal, 0..90
   let ang=Math.atan2(-(b.y-a.y), (b.x-a.x))*180/Math.PI;
   if(ang<0) ang+=180;
+  if(ang>90) ang=180-ang;     // sempre o agudo (a reta nao tem sentido p/ este angulo)
   return ang;
 }
 function angleBetween(u,w){
@@ -506,11 +507,14 @@ function dynamicLayer(){
 
   // angulos
   if(showAng){
-    // horizontais tracejadas
-    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x+70}" y2="${g.O.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
-    s += `<line x1="${g.Q.x}" y1="${g.Q.y}" x2="${g.Q.x+70}" y2="${g.Q.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
-    // arco do α₁ apontando ao longo da linha 1 REAL (trajetoria da objeto) no modo real
+    // linha 1: real (trajetoria da objeto) no modo real, senao ideal (obj->caçapa)
     const l1pt = (isReal && g.real.hitsObj && g.real.objEnd) ? g.real.objEnd : g.C;
+    // horizontais de referencia desenhadas para o lado mais proximo de cada reta,
+    // para o arco mostrar sempre o angulo AGUDO (< 90°) com a horizontal.
+    const hx1 = (l1pt.x >= g.O.x) ? 70 : -70;
+    const hx2 = (g.F.x  >= g.Q.x) ? 70 : -70;
+    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x+hx1}" y2="${g.O.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
+    s += `<line x1="${g.Q.x}" y1="${g.Q.y}" x2="${g.Q.x+hx2}" y2="${g.Q.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
     s += arc(g.O, l1pt, 44, 'var(--line1)', 'α₁ = '+g.t1.toFixed(0)+'°');
     s += arc(g.Q, g.F, 50, 'var(--line2)', 'θ₂ = '+g.t2.toFixed(0)+'°');
   }
@@ -755,18 +759,18 @@ function dashLineToPoint(a,P,ra,color,arrow){
   return `<line x1="${x1}" y1="${y1}" x2="${P.x}" y2="${P.y}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5"${head}/>`;
 }
 function arc(center, toward, r, color, label){
-  // arco do eixo horizontal positivo (direita) ate a direcao center->toward
-  // angulos em coords de tela (y para baixo). Ponto inicial: horizontal direita.
-  const x0 = center.x + r, y0 = center.y;
-  // direcao alvo normalizada
+  // arco do angulo AGUDO entre a horizontal mais proxima e a direcao center->toward.
+  // escolhe a horizontal (+x ou -x) do mesmo lado do toward, para o angulo sair < 90°.
   let ddx = toward.x-center.x, ddy = toward.y-center.y;
   const nn = Math.hypot(ddx,ddy)||1; ddx/=nn; ddy/=nn;
+  const hx = ddx>=0 ? 1 : -1;                 // horizontal do mesmo lado da reta
+  const x0 = center.x + hx*r, y0 = center.y;
   const exx = center.x + ddx*r, eyy = center.y + ddy*r;
-  // sweep-flag: em coords de tela, varrer "para cima" (toward acima) = sweep 0
-  const sweep = (toward.y < center.y) ? 0 : 1;
+  // varredura (mesma convencao de arc2): sinal do produto vetorial horizontal x toward
+  const sweep = (hx*ddy) > 0 ? 1 : 0;
   let s = `<path d="M ${x0} ${y0} A ${r} ${r} 0 0 ${sweep} ${exx.toFixed(1)} ${eyy.toFixed(1)}" fill="none" stroke="${color}" stroke-width="1.6"/>`;
   // label na bissetriz, um pouco fora do arco
-  let mdx = (1+ddx)/2, mdy = (0+ddy)/2;
+  let mdx = (hx+ddx)/2, mdy = ddy/2;
   const mn = Math.hypot(mdx,mdy)||1; mdx/=mn; mdy/=mn;
   s += `<text class="lbl" fill="${color}" x="${(center.x+mdx*(r+26)).toFixed(1)}" y="${(center.y+mdy*(r+26)+4).toFixed(1)}" text-anchor="middle">${label}</text>`;
   return s;
