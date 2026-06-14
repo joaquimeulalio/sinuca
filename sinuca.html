@@ -211,7 +211,7 @@ function compute(){
   const A = intersectRail(Q, v, state.target);
 
   // angulos contra a horizontal (graus, 0..180), medidos como inclinacao da reta
-  const t1 = angleH(C, O);     // linha 1: objeto->cacapa
+  let t1 = angleH(C, O);       // linha 1 ideal (objeto->caçapa); vira REAL adiante no modo real
   const t2 = angleH(Q, F);     // linha 2: branca->fantasma
   // fracao horizontal de A
   let afrac = (A.x - L)/W;
@@ -247,6 +247,10 @@ function compute(){
     real={Atgt,Fr,dirObj,hitsObj,objEnd,u:{x:ux,y:uy}};
   }
 
+  // α₁ = inclinacao da LINHA 1 REAL (trajetoria de fato da objeto) quando em modo real
+  // e a branca acerta a objeto; caso contrario, a linha 1 ideal (objeto->caçapa).
+  if(real && real.hitsObj && real.objEnd) t1 = angleH(O, real.objEnd);
+
   return {C,O,Q,P,F,A,t1,t2,afrac,cut,real};
 }
 
@@ -255,29 +259,34 @@ function compute(){
 // o A cujo corte real ~= cutTgt E cuja saida da objeto aponta mais para a caçapa
 // (mesmo criterio do botao "meia bola"). Salva/restaura o realA atual. null se nao achar.
 function findAforCut(cutTgt, tol){
-  const tg=state.target;
-  const rail=(tg==='SE'||tg==='SD')?'T':(tg==='IE'||tg==='ID')?'B':(tg==='ME')?'L':'R';
+  // Varre as direcoes de tiro a partir da branca (leque de ±90° em torno de B->objeto,
+  // que cobre toda direcao capaz de tocar a objeto). Para cada direcao simula a tacada
+  // real; entre as que dao o corte alvo e mandam a objeto rumo a caçapa, escolhe a melhor.
+  // Devolve o A = PRIMEIRA tabela atingida nessa direcao (qualquer uma das 4), ou null.
+  // Vale para qualquer caçapa, inclusive as do meio (a mira pode cair noutra tabela).
   const g0=compute();
-  const C=g0.C, O=g0.O;
+  const C=g0.C, O=g0.O, Q=g0.Q;
   let cdx=C.x-O.x, cdy=C.y-O.y; const cn=Math.hypot(cdx,cdy)||1; cdx/=cn; cdy/=cn;
+  const base=Math.atan2(O.y-Q.y, O.x-Q.x);
   const saved=realA;
   let best=null, bestScore=-1e9;
-  const N=240;
-  for(let i=0;i<=N;i++){
-    let ax,ay;
-    if(rail==='T'){ ay=T; ax=L+(R-L)*i/N; }
-    else if(rail==='B'){ ay=B; ax=L+(R-L)*i/N; }
-    else if(rail==='L'){ ax=L; ay=T+(B-T)*i/N; }
-    else { ax=R; ay=T+(B-T)*i/N; }
-    realA={x:ax,y:ay,rail};
+  const M=540;
+  for(let i=0;i<=M;i++){
+    const ang=base + (-1 + 2*i/M)*(Math.PI/2);     // base ± 90°
+    const dir={x:Math.cos(ang), y:Math.sin(ang)};
+    realA={x:Q.x+dir.x*1000, y:Q.y+dir.y*1000, rail:'?'};   // ponto distante p/ fixar a direcao
     const g=compute();
     if(g.real && g.real.hitsObj){
       const a=angleBetween({x:g.real.dirObj.x,y:g.real.dirObj.y},{x:-g.real.u.x,y:-g.real.u.y});
       const cutR=Math.min(a,180-a);
-      if(Math.abs(cutR-cutTgt)<tol){
-        const align = g.real.dirObj.x*cdx + g.real.dirObj.y*cdy;
-        const score = align - Math.abs(cutR-cutTgt)*0.05;
-        if(score>bestScore){ bestScore=score; best={x:ax,y:ay,rail}; }
+      const align=g.real.dirObj.x*cdx + g.real.dirObj.y*cdy;   // >0 => objeto ruma a caçapa
+      if(align>0 && Math.abs(cutR-cutTgt)<tol){
+        const score=align - Math.abs(cutR-cutTgt)*0.05;
+        if(score>bestScore){
+          bestScore=score;
+          const hit=intersectRail(Q, g.real.u, state.target);   // 1a tabela na direcao de tiro
+          best={x:hit.x, y:hit.y, rail:hit.rail};
+        }
       }
     }
   }
@@ -409,25 +418,21 @@ function dynamicLayer(){
   // linha 2: no modo normal vai ate o A ideal; no modo real, ate o A arrastado
   const A2 = isReal ? g.real.Atgt : g.A;
   s += dashLineToPoint(g.Q, A2, BALL, 'var(--line2)', true);
-  // label "linha 2": preferir a mesma altura do "linha 1", sobre a linha 2.
-  // se isso jogar o label para fora do feltro, reposicionar entre o ponto A e a objeto.
+  // label "linha 2": junto da extremidade da branca (B), recuado ao longo da linha
+  // (para nao cobrir a objeto) e afastado de lado (para nao cair sobre o tracejado).
   {
-    const yL1 = (g.C.y+g.O.y)/2;
-    const uy2 = (A2.y-g.Q.y);
-    let lx, ly;
-    if(Math.abs(uy2)>1e-6){
-      const xOnLine = g.Q.x + (A2.x-g.Q.x)*((yL1-g.Q.y)/uy2);
-      lx = xOnLine - 40; ly = yL1;   // -40 = recuo do texto para a esquerda da linha
-    } else { lx = -999; ly = yL1; }
-    // limites uteis do feltro (com margem p/ caber a palavra "linha 2", ~52px de largura)
-    const okX = (lx >= L+6) && (lx+52 <= R-6);
-    const okY = (ly >= T+6) && (ly <= B-6);
-    if(!okX || !okY){
-      // fallback: ponto medio entre A e objeto, sobre a linha 2
-      const mxp=(A2.x+g.O.x)/2, myp=(A2.y+g.O.y)/2;
-      lx = mxp - 40; ly = myp;
-    }
-    s += `<text class="lbl" fill="var(--line2)" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}">linha 2 (linha de tiro)</text>`;
+    let ux=A2.x-g.Q.x, uy=A2.y-g.Q.y; const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un;
+    const distBO=Math.hypot(g.O.x-g.Q.x, g.O.y-g.Q.y);
+    let d=Math.min(BALL+46, distBO*0.5); d=Math.max(d, BALL+12);   // ponto sobre a linha, perto de B
+    let bx=g.Q.x+ux*d, by=g.Q.y+uy*d;
+    // perpendicular: escolher o lado que cai mais para dentro do feltro
+    let px=-uy, py=ux;
+    const cxM=(L+R)/2, cyM=(T+B)/2;
+    if(Math.hypot(bx-px*18-cxM,by-py*18-cyM) < Math.hypot(bx+px*18-cxM,by+py*18-cyM)){ px=-px; py=-py; }
+    let lx=bx+px*18, ly=by+py*18+4;
+    const anchor = px>0.25?'start':px<-0.25?'end':'middle';
+    lx=Math.max(L+8,Math.min(R-8,lx)); ly=Math.max(T+14,Math.min(B-8,ly));
+    s += `<text class="lbl" fill="var(--line2)" text-anchor="${anchor}" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}">linha 2 (linha de tiro)</text>`;
   }
 
   if(isReal){
@@ -504,7 +509,9 @@ function dynamicLayer(){
     // horizontais tracejadas
     s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x+70}" y2="${g.O.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
     s += `<line x1="${g.Q.x}" y1="${g.Q.y}" x2="${g.Q.x+70}" y2="${g.Q.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
-    s += arc(g.O, g.C, 44, 'var(--line1)', 'α₁ = '+g.t1.toFixed(0)+'°');
+    // arco do α₁ apontando ao longo da linha 1 REAL (trajetoria da objeto) no modo real
+    const l1pt = (isReal && g.real.hitsObj && g.real.objEnd) ? g.real.objEnd : g.C;
+    s += arc(g.O, l1pt, 44, 'var(--line1)', 'α₁ = '+g.t1.toFixed(0)+'°');
     s += arc(g.Q, g.F, 50, 'var(--line2)', 'θ₂ = '+g.t2.toFixed(0)+'°');
   }
 
@@ -843,14 +850,15 @@ function moveDrag(e){
   e.preventDefault();
   const p=svgPoint(e);
   if(dragging==='A'){
-    // o ponto A vive sobre a tabela onde esta a cacapa alvo; projeta o cursor nessa tabela
-    const tg=state.target;
-    const rail=(tg==='SE'||tg==='SD')?'T':(tg==='IE'||tg==='ID')?'B':(tg==='ME')?'L':'R';
-    let ax,ay;
-    if(rail==='T'){ ay=T; ax=Math.max(L,Math.min(R,p.x)); }
-    else if(rail==='B'){ ay=B; ax=Math.max(L,Math.min(R,p.x)); }
-    else if(rail==='L'){ ax=L; ay=Math.max(T,Math.min(B,p.y)); }
-    else { ax=R; ay=Math.max(T,Math.min(B,p.y)); }
+    // o ponto A (mira) vive sobre a tabela MAIS PROXIMA do cursor — qualquer uma das 4.
+    // assim da para mirar em qualquer direcao, inclusive nas caçapas do meio.
+    const dT=Math.abs(p.y-T), dB=Math.abs(p.y-B), dLl=Math.abs(p.x-L), dRr=Math.abs(p.x-R);
+    const mn=Math.min(dT,dB,dLl,dRr);
+    let ax,ay,rail;
+    if(mn===dT){ rail='T'; ay=T; ax=Math.max(L,Math.min(R,p.x)); }
+    else if(mn===dB){ rail='B'; ay=B; ax=Math.max(L,Math.min(R,p.x)); }
+    else if(mn===dLl){ rail='L'; ax=L; ay=Math.max(T,Math.min(B,p.y)); }
+    else { rail='R'; ax=R; ay=Math.max(T,Math.min(B,p.y)); }
     realA={x:ax,y:ay,rail};
     render();
     return;
