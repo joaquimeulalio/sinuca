@@ -71,7 +71,6 @@
       <h2>Caçapa alvo</h2>
       <div class="pockets" id="pockets"></div>
       <h2>Leitura</h2>
-      <div class="row"><span>α₁ (linha 1 × horizontal)</span><span class="v" id="t1">–</span></div>
       <div class="row"><span>θ₂ (linha 2 × horizontal)</span><span class="v" id="t2">–</span></div>
       <div class="row"><span>Ponto A (fração da tabela)</span><span class="v" id="afrac">–</span></div>
       <div class="row"><span>γ (ângulo de corte)</span><span class="v" id="cut">–</span></div>
@@ -81,11 +80,11 @@
         <label class="tg"><input type="checkbox" id="showGrid"> mostrar grade de frações</label>
         <label class="tg"><input type="checkbox" id="showCover"> mostrar recobrimento</label>
         <label class="tg"><input type="checkbox" id="realShot"> tacada real (arrastar ponto A)</label>
-        <label class="tg"><input type="checkbox" id="show180"> método 180 − α (aproximado)</label>
+        <label class="tg"><input type="checkbox" id="show180"> regra do corte (α₁ + α₂)</label>
         <label class="tg"><input type="checkbox" id="showTri"> mostrar triângulos</label>
       </div>
       <div class="realbtns" id="realbtns" style="display:none">
-        <button class="rbtn" id="btnHalf">meia bola</button>
+        <button class="rbtn" id="btnHalf">meia bola 30°</button>
         <button class="rbtn" id="btnIdeal">mira ideal</button>
       </div>
     </div>
@@ -162,6 +161,17 @@ function axisLayer(){
   return s;
 }
 
+function legendLayer(){
+  // legenda estatica das retas, ao lado dos eixos x/y (canto inferior esquerdo)
+  const x0=L+96, y0=B-56;     // dentro do feltro, acima do eixo x
+  let s='';
+  s+=`<line x1="${x0}" y1="${y0}" x2="${x0+22}" y2="${y0}" stroke="var(--line1)" stroke-width="2.6" stroke-dasharray="8 4"/>`;
+  s+=`<text class="leg" x="${x0+28}" y="${y0+4}">linha 1 (alvo)</text>`;
+  s+=`<line x1="${x0}" y1="${y0+16}" x2="${x0+22}" y2="${y0+16}" stroke="var(--line2)" stroke-width="2" stroke-dasharray="6 4"/>`;
+  s+=`<text class="leg" x="${x0+28}" y="${y0+20}">linha 2 (tiro)</text>`;
+  return s;
+}
+
 function gridLayer(){
   if(!document.getElementById('showGrid').checked) return '';
   let s='';
@@ -210,8 +220,8 @@ function compute(){
   const v = {x:F.x-Q.x, y:F.y-Q.y};
   const A = intersectRail(Q, v, state.target);
 
-  // angulos contra a horizontal (graus, 0..180), medidos como inclinacao da reta
-  let t1 = angleH(C, O);       // linha 1 ideal (objeto->caçapa); vira REAL adiante no modo real
+  // angulos contra a horizontal (graus, 0..90), medidos como inclinacao da reta
+  const t1 = angleH(C, O);     // linha 1 IDEAL (objeto->caçapa) — usado no metodo "180 − α"
   const t2 = angleH(Q, F);     // linha 2: branca->fantasma
   // fracao horizontal de A
   let afrac = (A.x - L)/W;
@@ -246,10 +256,6 @@ function compute(){
     }
     real={Atgt,Fr,dirObj,hitsObj,objEnd,u:{x:ux,y:uy}};
   }
-
-  // α₁ = inclinacao da LINHA 1 REAL (trajetoria de fato da objeto) quando em modo real
-  // e a branca acerta a objeto; caso contrario, a linha 1 ideal (objeto->caçapa).
-  if(real && real.hitsObj && real.objEnd) t1 = angleH(O, real.objEnd);
 
   return {C,O,Q,P,F,A,t1,t2,afrac,cut,real};
 }
@@ -416,30 +422,14 @@ function dynamicLayer(){
     s += arc2(pivot, towardA, towardB, R, GAMMA, 'γ = '+gamma.toFixed(0)+'°');
   }
 
-  // linha 2: no modo normal vai ate o A ideal; no modo real, ate o A arrastado
+  // linha 2 (linha de tiro): da branca ate o A. no modo real termina na BORDA da bolinha
+  // de arraste (recuo de 9px) para a seta nao ficar coberta por ela. label sai na legenda.
   const A2 = isReal ? g.real.Atgt : g.A;
-  s += dashLineToPoint(g.Q, A2, BALL, 'var(--line2)', true);
-  // label "linha 2": junto da extremidade da branca (B), recuado ao longo da linha
-  // (para nao cobrir a objeto) e afastado de lado (para nao cair sobre o tracejado).
-  {
-    let ux=A2.x-g.Q.x, uy=A2.y-g.Q.y; const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un;
-    const distBO=Math.hypot(g.O.x-g.Q.x, g.O.y-g.Q.y);
-    let d=Math.min(BALL+46, distBO*0.5); d=Math.max(d, BALL+12);   // ponto sobre a linha, perto de B
-    let bx=g.Q.x+ux*d, by=g.Q.y+uy*d;
-    // perpendicular: escolher o lado que cai mais para dentro do feltro
-    let px=-uy, py=ux;
-    const cxM=(L+R)/2, cyM=(T+B)/2;
-    if(Math.hypot(bx-px*18-cxM,by-py*18-cyM) < Math.hypot(bx+px*18-cxM,by+py*18-cyM)){ px=-px; py=-py; }
-    let lx=bx+px*18, ly=by+py*18+4;
-    const anchor = px>0.25?'start':px<-0.25?'end':'middle';
-    lx=Math.max(L+8,Math.min(R-8,lx)); ly=Math.max(T+14,Math.min(B-8,ly));
-    s += `<text class="lbl" fill="var(--line2)" text-anchor="${anchor}" x="${lx.toFixed(1)}" y="${ly.toFixed(1)}">linha 2 (linha de tiro)</text>`;
-  }
+  s += dashLineToPoint(g.Q, A2, BALL, 'var(--line2)', true, isReal ? 9 : 0);
 
   if(isReal){
     // linha 1 IDEAL como referencia: pontilhada clara, objeto -> cacapa
     s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.C.x}" y2="${g.C.y}" stroke="#ffe9a8" stroke-width="1.4" stroke-dasharray="2 5" opacity="0.7"/>`;
-    s += `<text class="lbl" fill="#ffe9a8" x="${(g.C.x+g.O.x)/2+16}" y="${(g.C.y+g.O.y)/2}" opacity="0.85">ideal</text>`;
     // linha 1 REAL: trajetoria de fato da objeto (amarelo forte), so se a branca acerta a objeto.
     // estende da INTERSECAO com a linha de tiro (gammaPivot), passando pela objeto, ate a parede.
     // A SETA fica no FIM da reta (na parede, objEnd), apontando no sentido de saida da alvo.
@@ -454,23 +444,24 @@ function dynamicLayer(){
       let ox=g.real.objEnd.x-g.O.x, oy=g.real.objEnd.y-g.O.y; const onn=Math.hypot(ox,oy)||1; ox/=onn; oy/=onn;
       const sx=g.O.x+ox*BALL, sy=g.O.y+oy*BALL;
       s += `<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${g.real.objEnd.x.toFixed(1)}" y2="${g.real.objEnd.y.toFixed(1)}" stroke="var(--line1)" stroke-width="2.6" stroke-dasharray="10 6" marker-end="url(#arr1)"/>`;
-      s += `<text class="lbl" fill="var(--line1)" x="${(g.O.x+g.real.objEnd.x)/2+14}" y="${((g.O.y+g.real.objEnd.y)/2-22).toFixed(1)}">linha 1 (real)</text>`;
     }
   } else {
-    // linha 1: cacapa -> objeto (verde/amarela tracejada)
+    // linha 1: cacapa -> objeto (verde/amarela tracejada). label sai na legenda.
     s += dashLine(g.C, g.O, POCKET, BALL, 'var(--line1)');
-    s += `<text class="lbl" fill="var(--line1)" x="${(g.C.x+g.O.x)/2+16}" y="${(g.C.y+g.O.y)/2}">linha 1</text>`;
   }
 
   // metodo "180 - alfa": angulo VISIVEL entre (obj->branca) e (obj->cacapa), medido na objeto.
   // corte ≈ 180 - alfa. Tudo usa pontos reais (branca, objeto, cacapa).
   if(show180){
     const M180 = '#c98bdc';   // roxo claro, cor propria
+    // α₁: angulo AGUDO da linha 1 IDEAL (objeto->caçapa) com a horizontal
+    const hx1 = (g.C.x >= g.O.x) ? 70 : -70;
+    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x+hx1}" y2="${g.O.y}" stroke="${M180}" stroke-width="1" stroke-dasharray="3 3"/>`;
+    s += arc(g.O, g.C, 44, M180, 'α₁ = '+g.t1.toFixed(0)+'°');
     // linha objeto->branca (a outra ja existe como linha 1 obj->cacapa)
     s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.Q.x}" y2="${g.Q.y}" stroke="${M180}" stroke-width="1.6" stroke-dasharray="2 4"/>`;
-    // arco alfa na objeto entre obj->branca e obj->cacapa
+    // α (interno, nao exibido): so para escolher o sinal certo da combinacao α₁/α₂
     const alpha = angleBetween({x:g.Q.x-g.O.x,y:g.Q.y-g.O.y},{x:g.C.x-g.O.x,y:g.C.y-g.O.y});
-    s += arc2(g.O, g.Q, g.C, 34, M180, '');
     // α₂: angulo na OBJETO entre a reta objeto->branca e a vertical
     const dxQ=g.Q.x-g.O.x, dyQ=g.Q.y-g.O.y;
     // vertical de referencia: para baixo ou para cima, o que estiver do mesmo lado da branca
@@ -480,16 +471,21 @@ function dynamicLayer(){
     const alpha2 = angleBetween({x:dxQ,y:dyQ},{x:0,y:vy});
     s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x}" y2="${g.Q.y.toFixed(1)}" stroke="${M180}" stroke-width="1" stroke-dasharray="3 3"/>`;
     s += arc2(g.O, g.Q, vert, 62, M180, 'α₂ = '+alpha2.toFixed(0)+'°');
-    const corteAp = 180-alpha;
-    // regra prática por α (meia bola exata = α 150° = corte 30°):
-    const d = alpha - 150;
+    // combinacao de α₁ e α₂ (com o sinal que reproduz a geometria; α nao e exibido).
+    // identidade exata: α = 90° + comb  ⟹  corte ≈ 90° − comb. meia bola = comb 60° (corte 30°).
+    const a1=g.t1, a2=alpha2;
+    const cand=[{v:a1+a2,t:'α₁+α₂'},{v:a2-a1,t:'α₂−α₁'},{v:a1-a2,t:'α₁−α₂'},{v:-a1-a2,t:'−α₁−α₂'}];
+    let pick=cand[0];
+    for(const c of cand){ if(Math.abs((90+c.v)-alpha) < Math.abs((90+pick.v)-alpha)) pick=c; }
+    const comb = pick.v;
+    const d = comb - 60;                  // comparado com a meia bola (60°)
     let regra;
     if(Math.abs(d) < 0.5)      regra = '= 1/2 bola (corte 30°)';
-    else if(d > 0)             regra = (d < 8 ? 'pouco menos' : 'menos') + ' corte que 1/2 bola';
-    else                       regra = (-d < 8 ? 'pouco mais' : 'mais') + ' corte que 1/2 bola';
+    else if(d < 0)             regra = (-d < 8 ? 'pouco mais' : 'mais') + ' corte que 1/2 bola';
+    else                       regra = (d < 8 ? 'pouco menos' : 'menos') + ' corte que 1/2 bola';
     // ---- painel no canto: lado VERTICAL oposto ao da caçapa, lado HORIZONTAL oposto ao da branca ----
     // ex.: caçapa em cima -> painel embaixo; branca a esquerda -> painel a direita.
-    const BW=228, BH=98, m=16;
+    const BW=232, BH=90, m=16;
     const midX=(L+R)/2, midY=(T+B)/2;
     const right = g.Q.x < midX;        // branca a esquerda -> painel a direita
     const bottom = g.C.y < midY;       // caçapa em cima   -> painel embaixo
@@ -497,25 +493,17 @@ function dynamicLayer(){
     const by = bottom ? (B-m-BH) : (T+m);
     const tx=bx+12, ty=by+22;
     s += `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${BW}" height="${BH}" rx="8" fill="#0a513f" fill-opacity="0.85" stroke="${M180}" stroke-width="1.2"/>`;
-    s += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" fill="${M180}" font-size="13" font-weight="700">α = ${alpha.toFixed(0)}°</text>`;
-    s += `<text x="${tx.toFixed(1)}" y="${(ty+16).toFixed(1)}" fill="${M180}" font-size="12">corte ≈ 180−α = ${corteAp.toFixed(0)}°</text>`;
-    s += `<text x="${tx.toFixed(1)}" y="${(ty+32).toFixed(1)}" fill="${M180}" font-size="12" font-weight="700">→ ${regra}</text>`;
-    s += `<text x="${tx.toFixed(1)}" y="${(ty+54).toFixed(1)}" fill="${M180}" font-size="11">regra: α=150°→1/2 bola (corte 30°)</text>`;
-    s += `<text x="${tx.toFixed(1)}" y="${(ty+68).toFixed(1)}" fill="${M180}" font-size="11">α&gt;150°→menos corte</text>`;
-    s += `<text x="${tx.toFixed(1)}" y="${(ty+82).toFixed(1)}" fill="${M180}" font-size="11">α&lt;150°→mais corte</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" fill="${M180}" font-size="13" font-weight="700">${pick.t} = ${comb.toFixed(0)}°</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${(ty+20).toFixed(1)}" fill="${M180}" font-size="11">α₁+α₂ &lt; 60° → mais corte</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${(ty+34).toFixed(1)}" fill="${M180}" font-size="11">α₁+α₂ &gt; 60° → menos corte</text>`;
+    s += `<text x="${tx.toFixed(1)}" y="${(ty+56).toFixed(1)}" fill="${M180}" font-size="12" font-weight="700">→ ${regra}</text>`;
   }
 
-  // angulos
+  // angulos: θ₂ (linha 2 × horizontal). α₁ saiu daqui e foi para o metodo "180 − α".
   if(showAng){
-    // linha 1: real (trajetoria da objeto) no modo real, senao ideal (obj->caçapa)
-    const l1pt = (isReal && g.real.hitsObj && g.real.objEnd) ? g.real.objEnd : g.C;
-    // horizontais de referencia desenhadas para o lado mais proximo de cada reta,
-    // para o arco mostrar sempre o angulo AGUDO (< 90°) com a horizontal.
-    const hx1 = (l1pt.x >= g.O.x) ? 70 : -70;
-    const hx2 = (g.F.x  >= g.Q.x) ? 70 : -70;
-    s += `<line x1="${g.O.x}" y1="${g.O.y}" x2="${g.O.x+hx1}" y2="${g.O.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
+    // horizontal de referencia para o lado mais proximo da linha 2 (angulo AGUDO < 90°)
+    const hx2 = (g.F.x >= g.Q.x) ? 70 : -70;
     s += `<line x1="${g.Q.x}" y1="${g.Q.y}" x2="${g.Q.x+hx2}" y2="${g.Q.y}" stroke="#7c7c76" stroke-width="1" stroke-dasharray="3 3"/>`;
-    s += arc(g.O, l1pt, 44, 'var(--line1)', 'α₁ = '+g.t1.toFixed(0)+'°');
     s += arc(g.Q, g.F, 50, 'var(--line2)', 'θ₂ = '+g.t2.toFixed(0)+'°');
   }
 
@@ -676,7 +664,6 @@ function dynamicLayer(){
 
   // atualizar painel
   const railName = {T:'Tabela 1',B:'Tabela 3',L:'Tabela 4',R:'Tabela 2'}[g.A.rail]||'–';
-  document.getElementById('t1').textContent = g.t1.toFixed(1)+'°';
   document.getElementById('t2').textContent = g.t2.toFixed(1)+'°';
   // fracao ao longo da tabela atingida
   let frac;
@@ -752,11 +739,14 @@ function dashLine(a,b,ra,rb,color){
   const x1=a.x+dx*ra, y1=a.y+dy*ra, x2=b.x-dx*rb, y2=b.y-dy*rb;
   return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2.6" stroke-dasharray="10 6"/>`;
 }
-function dashLineToPoint(a,P,ra,color,arrow){
+function dashLineToPoint(a,P,ra,color,arrow,rb){
+  // ra = recuo no inicio (borda da branca); rb = recuo no fim (p/ a seta nao bater no alvo)
   let dx=P.x-a.x, dy=P.y-a.y; const n=Math.hypot(dx,dy)||1; dx/=n; dy/=n;
+  const back=rb||0;
   const x1=a.x+dx*ra, y1=a.y+dy*ra;
+  const x2=P.x-dx*back, y2=P.y-dy*back;
   const head = arrow? ` marker-end="url(#arr)"`:'';
-  return `<line x1="${x1}" y1="${y1}" x2="${P.x}" y2="${P.y}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5"${head}/>`;
+  return `<line x1="${x1}" y1="${y1}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${color}" stroke-width="2" stroke-dasharray="6 5"${head}/>`;
 }
 function arc(center, toward, r, color, label){
   // arco do angulo AGUDO entre a horizontal mais proxima e a direcao center->toward.
@@ -807,13 +797,15 @@ function defs(){
       .Atag{font-size:16px;font-weight:700;font-family:inherit}
       .ctag{font-size:13px;font-weight:700;font-family:inherit}
       .axislbl{fill:#f0e9d8;font-size:12px;font-family:inherit;font-weight:600}
+      .leg{fill:#f0e9d8;font-size:11px;font-family:inherit}
       .trilbl{font-size:12px;font-family:inherit;font-weight:600}
     </style></defs>`;
 }
 
 function render(){
-  SVG.innerHTML = defs() + buildStatic() + gridLayer() + axisLayer() + pocketsLayer() + dynamicLayer();
+  SVG.innerHTML = defs() + buildStatic() + gridLayer() + axisLayer() + legendLayer() + pocketsLayer() + dynamicLayer();
   attachDrag();
+  saveState();
 }
 
 // ---- caçapa selector ----
@@ -908,6 +900,28 @@ document.getElementById('btnHalf').addEventListener('click',()=>{
   render();
 });
 
+// ---- persistencia: lembra posicoes/opcoes para a proxima execucao (arquivo temporario do navegador) ----
+const LS_KEY='sinuca_state_v1';
+const TOGGLE_IDS=['showGhost','showAngles','showGrid','showCover','realShot','show180','showTri'];
+function saveState(){
+  try{
+    const cfg={obj:state.obj, cue:state.cue, target:state.target, realA, toggles:{}};
+    TOGGLE_IDS.forEach(id=>{ const el=document.getElementById(id); if(el) cfg.toggles[id]=el.checked; });
+    localStorage.setItem(LS_KEY, JSON.stringify(cfg));
+  }catch(e){}
+}
+function loadState(){
+  try{
+    const raw=localStorage.getItem(LS_KEY); if(!raw) return;
+    const cfg=JSON.parse(raw);
+    if(cfg.obj && cfg.cue && pockets[cfg.target]) state={obj:cfg.obj, cue:cfg.cue, target:cfg.target};
+    if(cfg.realA) realA=cfg.realA;
+    if(cfg.toggles) TOGGLE_IDS.forEach(id=>{ const el=document.getElementById(id); if(el && id in cfg.toggles) el.checked=cfg.toggles[id]; });
+  }catch(e){}
+}
+
+loadState();
+document.getElementById('realbtns').style.display = document.getElementById('realShot').checked ? 'flex' : 'none';
 buildPocketButtons();
 render();
 </script>
